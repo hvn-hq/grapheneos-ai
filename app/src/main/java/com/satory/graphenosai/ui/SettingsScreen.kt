@@ -31,7 +31,6 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.satory.graphenosai.AssistantApplication
 import com.satory.graphenosai.audio.VoskTranscriber
-import com.satory.graphenosai.llm.GitHubCopilotAuth
 import com.satory.graphenosai.llm.LocalModelManager
 import com.satory.graphenosai.service.AssistantService
 import kotlinx.coroutines.launch
@@ -65,14 +64,12 @@ fun SettingsScreen(
     var showLocalModelDialog by remember { mutableStateOf(false) }
     var showPromptDialog by remember { mutableStateOf(false) }
     var showApiKeyDialog by remember { mutableStateOf(false) }
-    var showCopilotTokenDialog by remember { mutableStateOf(false) }
     var showBraveKeyDialog by remember { mutableStateOf(false) }
     var showExaKeyDialog by remember { mutableStateOf(false) }
     var showSearchEngineDialog by remember { mutableStateOf(false) }
     var showLanguageDialog by remember { mutableStateOf(false) }
     var showSecondaryLanguageDialog by remember { mutableStateOf(false) }
     var hasApiKey by remember { mutableStateOf(app.secureKeyManager.hasOpenRouterApiKey()) }
-    var hasCopilotToken by remember { mutableStateOf(app.secureKeyManager.hasCopilotToken()) }
     var hasBraveApiKey by remember { mutableStateOf(app.secureKeyManager.hasBraveApiKey()) }
     var hasExaApiKey by remember { mutableStateOf(app.secureKeyManager.hasExaApiKey()) }
     var searchEngine by remember { mutableStateOf(settingsManager.searchEngine) }
@@ -112,7 +109,6 @@ fun SettingsScreen(
                 var showProviderDialog by remember { mutableStateOf(false) }
                 
                 val providerName = when (apiProvider) {
-                    SettingsManager.PROVIDER_COPILOT -> "GitHub Copilot"
                     SettingsManager.PROVIDER_LOCAL -> "Local AI (Offline)"
                     else -> "OpenRouter"
                 }
@@ -136,7 +132,6 @@ fun SettingsScreen(
                             Column {
                                 listOf(
                                     Triple(SettingsManager.PROVIDER_OPENROUTER, "OpenRouter", "Cloud AI via API key"),
-                                    Triple(SettingsManager.PROVIDER_COPILOT, "GitHub Copilot", "Cloud AI via GitHub"),
                                     Triple(SettingsManager.PROVIDER_LOCAL, "Local AI (Offline)", "Runs on device, no internet needed")
                                 ).forEach { (provider, name, description) ->
                                     Row(
@@ -191,15 +186,6 @@ fun SettingsScreen(
                     )
                 }
                 
-                // GitHub Copilot Token
-                if (apiProvider == SettingsManager.PROVIDER_COPILOT) {
-                    SettingsItem(
-                        icon = Icons.Default.Key,
-                        title = "GitHub Copilot Token",
-                        subtitle = if (hasCopilotToken) "Configured ✓" else "Not configured",
-                        onClick = { showCopilotTokenDialog = true }
-                    )
-                }
             }
             
             // Local AI Models Section (only shown when Local provider selected)
@@ -258,9 +244,7 @@ fun SettingsScreen(
             // Model Section - different for local vs cloud providers
             if (apiProvider != SettingsManager.PROVIDER_LOCAL) {
             SettingsSection(title = "AI Model") {
-                val modelList = if (apiProvider == SettingsManager.PROVIDER_COPILOT) 
-                    SettingsManager.COPILOT_MODELS else SettingsManager.AVAILABLE_MODELS
-                val modelName = modelList
+                val modelName = SettingsManager.AVAILABLE_MODELS
                     .find { it.id == selectedModel }?.name ?: selectedModel
                 SettingsItem(
                     icon = Icons.Default.SmartToy,
@@ -796,7 +780,7 @@ fun SettingsScreen(
                 )
                 
                 Text(
-                    text = "Privacy-first AI assistant with OpenRouter and GitHub Copilot support. All conversations are processed securely with on-device encryption.",
+                    text = "Privacy-first AI assistant with OpenRouter support. All conversations are processed securely with on-device encryption.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
@@ -817,14 +801,20 @@ fun SettingsScreen(
     
     // Model Selection Dialog
     if (showModelDialog) {
-        val modelList = if (apiProvider == SettingsManager.PROVIDER_COPILOT) 
-            SettingsManager.COPILOT_MODELS else SettingsManager.AVAILABLE_MODELS
         ModelSelectionDialog(
-            currentModel = selectedModel,
-            models = modelList,
+            currentModel = if (customModelId.isNotBlank()) customModelId else selectedModel,
+            customModelId = customModelId,
+            models = SettingsManager.AVAILABLE_MODELS,
             onModelSelected = { model ->
                 selectedModel = model
                 settingsManager.selectedModel = model
+                settingsManager.customModelId = ""
+                assistantService?.reloadSettings()
+                showModelDialog = false
+            },
+            onCustomModelSelected = { modelId ->
+                customModelId = modelId
+                settingsManager.customModelId = modelId
                 assistantService?.reloadSettings()
                 showModelDialog = false
             },
@@ -883,18 +873,6 @@ fun SettingsScreen(
                 showApiKeyDialog = false
             },
             onDismiss = { showApiKeyDialog = false }
-        )
-    }
-    
-    // Copilot OAuth Dialog
-    if (showCopilotTokenDialog) {
-        GitHubOAuthDialog(
-            onTokenReceived = { token ->
-                app.secureKeyManager.setCopilotToken(token)
-                hasCopilotToken = true
-                showCopilotTokenDialog = false
-            },
-            onDismiss = { showCopilotTokenDialog = false }
         )
     }
     
@@ -1049,10 +1027,29 @@ fun SettingsItemWithSwitch(
 @Composable
 fun ModelSelectionDialog(
     currentModel: String,
+    customModelId: String = "",
     models: List<SettingsManager.ModelInfo> = SettingsManager.AVAILABLE_MODELS,
     onModelSelected: (String) -> Unit,
+    onCustomModelSelected: (String) -> Unit = {},
     onDismiss: () -> Unit
 ) {
+    var showCustomInput by remember { mutableStateOf(false) }
+    
+    if (showCustomInput) {
+        CustomModelDialog(
+            currentCustomModel = customModelId,
+            onModelSaved = { modelId ->
+                if (modelId.isNotBlank()) {
+                    onCustomModelSelected(modelId)
+                }
+                showCustomInput = false
+                onDismiss()
+            },
+            onDismiss = { showCustomInput = false }
+        )
+        return
+    }
+    
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -1113,6 +1110,38 @@ fun ModelSelectionDialog(
                                 onClick = { onModelSelected(model.id) }
                             )
                         }
+                    }
+                    
+                    // Custom model option
+                    item {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    }
+                    item {
+                        ListItem(
+                            headlineContent = {
+                                Text(
+                                    "Custom model...",
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            },
+                            supportingContent = {
+                                Text(
+                                    if (customModelId.isNotBlank()) "Current: $customModelId"
+                                    else "Enter any OpenRouter model ID"
+                                )
+                            },
+                            leadingContent = {
+                                RadioButton(
+                                    selected = customModelId.isNotBlank() &&
+                                        currentModel == customModelId,
+                                    onClick = { showCustomInput = true }
+                                )
+                            },
+                            modifier = Modifier
+                                .clickable { showCustomInput = true }
+                                .padding(vertical = 4.dp)
+                        )
                     }
                 }
             }
@@ -1364,261 +1393,6 @@ fun BraveApiKeyDialog(
             }
         }
     )
-}
-
-@Composable
-fun GitHubOAuthDialog(
-    onTokenReceived: (String) -> Unit,
-    onDismiss: () -> Unit
-) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val clipboardManager = context.getSystemService(ClipboardManager::class.java)
-    
-    var authState by remember { mutableStateOf<GitHubOAuthState>(GitHubOAuthState.Initial) }
-    var userCode by remember { mutableStateOf("") }
-    var verificationUri by remember { mutableStateOf("") }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
-    
-    // Start OAuth flow when dialog opens
-    LaunchedEffect(Unit) {
-        authState = GitHubOAuthState.Starting
-        
-        val auth = GitHubCopilotAuth()
-        val result = auth.authenticate { state ->
-            when (state) {
-                is GitHubCopilotAuth.AuthState.Idle -> {
-                    authState = GitHubOAuthState.Starting
-                }
-                is GitHubCopilotAuth.AuthState.WaitingForUser -> {
-                    userCode = state.userCode
-                    verificationUri = state.verificationUri
-                    authState = GitHubOAuthState.WaitingForUser
-                    // Don't auto-open browser - let user copy the code first
-                }
-                is GitHubCopilotAuth.AuthState.Polling -> {
-                    authState = GitHubOAuthState.Polling
-                }
-                is GitHubCopilotAuth.AuthState.Success -> {
-                    authState = GitHubOAuthState.Success
-                    onTokenReceived(state.token)
-                }
-                is GitHubCopilotAuth.AuthState.Error -> {
-                    errorMessage = state.message
-                    authState = GitHubOAuthState.Error
-                }
-            }
-        }
-        
-        if (result.isFailure && authState != GitHubOAuthState.Success && authState != GitHubOAuthState.Error) {
-            errorMessage = result.exceptionOrNull()?.message ?: "Unknown error"
-            authState = GitHubOAuthState.Error
-        }
-    }
-    
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(dismissOnBackPress = true, dismissOnClickOutside = false)
-    ) {
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            shape = MaterialTheme.shapes.large
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Icon(
-                    Icons.Default.Lock,
-                    contentDescription = null,
-                    modifier = Modifier.size(48.dp),
-                    tint = MaterialTheme.colorScheme.primary
-                )
-                
-                Spacer(modifier = Modifier.height(16.dp))
-                
-                Text(
-                    "GitHub Copilot Login",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center
-                )
-                
-                Spacer(modifier = Modifier.height(24.dp))
-                
-                when (authState) {
-                    GitHubOAuthState.Initial, GitHubOAuthState.Starting -> {
-                        CircularProgressIndicator()
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            "Connecting to GitHub...",
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                    
-                    GitHubOAuthState.WaitingForUser -> {
-                        Text(
-                            "1. Copy this code:",
-                            style = MaterialTheme.typography.bodyMedium,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        
-                        Spacer(modifier = Modifier.height(12.dp))
-                        
-                        // Big code display - centered
-                        Card(
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.primaryContainer
-                            ),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(
-                                modifier = Modifier
-                                    .padding(20.dp)
-                                    .fillMaxWidth(),
-                                horizontalAlignment = Alignment.CenterHorizontally
-                            ) {
-                                Text(
-                                    text = userCode,
-                                    style = MaterialTheme.typography.headlineLarge,
-                                    fontWeight = FontWeight.Bold,
-                                    letterSpacing = 6.dp.value.sp,
-                                    textAlign = TextAlign.Center
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                OutlinedButton(
-                                    onClick = {
-                                        clipboardManager?.setPrimaryClip(
-                                            ClipData.newPlainText("user_code", userCode)
-                                        )
-                                    }
-                                ) {
-                                    Icon(
-                                        Icons.Default.ContentCopy,
-                                        contentDescription = "Copy code",
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Copy Code")
-                                }
-                            }
-                        }
-                        
-                        Spacer(modifier = Modifier.height(20.dp))
-                        
-                        Text(
-                            "2. Open GitHub and enter the code:",
-                            style = MaterialTheme.typography.bodyMedium,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        
-                        Spacer(modifier = Modifier.height(12.dp))
-                        
-                        Button(
-                            onClick = {
-                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(verificationUri))
-                                context.startActivity(intent)
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Default.OpenInBrowser, contentDescription = null)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Open GitHub")
-                        }
-                        
-                        Spacer(modifier = Modifier.height(8.dp))
-                        
-                        Text(
-                            verificationUri,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                    
-                    GitHubOAuthState.Polling -> {
-                        CircularProgressIndicator()
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            "Waiting for authorization...",
-                            style = MaterialTheme.typography.bodyMedium,
-                            textAlign = TextAlign.Center
-                        )
-                        Text(
-                            "Complete the login in your browser",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                    
-                    GitHubOAuthState.Success -> {
-                        Icon(
-                            Icons.Default.CheckCircle,
-                            contentDescription = null,
-                            modifier = Modifier.size(48.dp),
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            "Successfully logged in!",
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.Medium,
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                    
-                    GitHubOAuthState.Error -> {
-                        Icon(
-                            Icons.Default.Error,
-                            contentDescription = null,
-                            modifier = Modifier.size(48.dp),
-                            tint = MaterialTheme.colorScheme.error
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            "Login failed",
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.error,
-                            textAlign = TextAlign.Center
-                        )
-                        errorMessage?.let {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                it,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                    }
-                }
-                
-                Spacer(modifier = Modifier.height(24.dp))
-                
-                if (authState != GitHubOAuthState.Success) {
-                    TextButton(onClick = onDismiss) {
-                        Text("Cancel")
-                    }
-                }
-            }
-        }
-    }
-}private sealed class GitHubOAuthState {
-    object Initial : GitHubOAuthState()
-    object Starting : GitHubOAuthState()
-    object WaitingForUser : GitHubOAuthState()
-    object Polling : GitHubOAuthState()
-    object Success : GitHubOAuthState()
-    object Error : GitHubOAuthState()
 }
 
 @Composable

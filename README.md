@@ -16,7 +16,6 @@ A privacy-focused AI assistant I built as an alternative to Google Gemini while 
 
 ### AI Backends (pick one):
 - **OpenRouter** - Access to 100+ AI models (Claude, GPT-4, Llama, Mistral, etc.)
-- **GitHub Copilot** - If you already have a Copilot subscription
 
 ### Voice Recognition (pick one):
 - **Android built-in** - Uses your system's speech recognition
@@ -31,7 +30,7 @@ A privacy-focused AI assistant I built as an alternative to Google Gemini while 
 1. **Download** the APK from [Releases](../../releases)
 2. **Install** on your device
 3. **Get API keys**:
-   - [OpenRouter](https://openrouter.ai) or GitHub Copilot
+   - [OpenRouter](https://openrouter.ai)
    - [Brave Search](https://brave.com/search/api/) (optional)
 4. **Configure** in the app
 5. **Set as default assistant**:
@@ -67,13 +66,7 @@ Good question! Here's my reasoning:
 
 ## ⚠️ Known Issues
 
-### GitHub Copilot - Session Expires Quickly
-If you're using GitHub Copilot as your AI backend, be aware that **sessions expire quickly** (typically within hours). This means you'll need to **re-authenticate frequently**, which can be inconvenient.
 
-**Workaround**: 
-- Use **OpenRouter** instead (recommended) - more stable sessions
-- Re-authenticate in Settings when prompted
-- Consider switching to OpenRouter for a better experience
 
 ## 📚 Documentation
 

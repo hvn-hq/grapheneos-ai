@@ -27,7 +27,6 @@ class SecureKeyManager(private val context: Context) {
         
         private const val PREFS_NAME = "assistant_secure_prefs"
         private const val PREF_OPENROUTER_KEY = "openrouter_api_key"
-        private const val PREF_COPILOT_TOKEN = "copilot_token"
         private const val PREF_GROQ_KEY = "groq_api_key"
         private const val PREF_SEARCH_PROXY_URL = "search_proxy_url"
         private const val PREF_TOKEN_REFRESH_TIME = "token_refresh_time"
@@ -152,44 +151,6 @@ class SecureKeyManager(private val context: Context) {
      */
     fun clearOpenRouterApiKey() {
         prefs.edit().remove(PREF_OPENROUTER_KEY).apply()
-    }
-
-    // ========== GitHub Copilot Token Management ==========
-    
-    /**
-     * Store GitHub Copilot token securely.
-     */
-    fun setCopilotToken(token: String) {
-        val encrypted = encrypt(token)
-        prefs.edit().putString(PREF_COPILOT_TOKEN, encrypted).apply()
-        Log.i(TAG, "Copilot token stored securely")
-    }
-    
-    /**
-     * Retrieve GitHub Copilot token.
-     */
-    fun getCopilotToken(): String? {
-        val encrypted = prefs.getString(PREF_COPILOT_TOKEN, null) ?: return null
-        return try {
-            decrypt(encrypted)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to decrypt Copilot token", e)
-            null
-        }
-    }
-    
-    /**
-     * Check if Copilot token is configured.
-     */
-    fun hasCopilotToken(): Boolean {
-        return prefs.contains(PREF_COPILOT_TOKEN)
-    }
-    
-    /**
-     * Clear stored Copilot token.
-     */
-    fun clearCopilotToken() {
-        prefs.edit().remove(PREF_COPILOT_TOKEN).apply()
     }
 
     // ========== Groq API Key Management ==========

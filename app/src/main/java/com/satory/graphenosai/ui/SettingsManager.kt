@@ -34,7 +34,6 @@ class SettingsManager(context: Context) {
         
         // API Providers
         const val PROVIDER_OPENROUTER = "openrouter"
-        const val PROVIDER_COPILOT = "copilot"
         const val PROVIDER_LOCAL = "local"  // Local llama.cpp models
         
         // Search Engines
@@ -43,7 +42,7 @@ class SettingsManager(context: Context) {
         
         // Local model settings
         private const val KEY_LOCAL_MODEL_ID = "local_model_id"
-        const val DEFAULT_LOCAL_MODEL = "qwen2.5-1.5b-instruct"
+        const val DEFAULT_LOCAL_MODEL = "qwen3-4b"
         
         val AVAILABLE_MODELS = listOf(
             ModelInfo("openai/gpt-4o-mini", "GPT-4o Mini", "Fast, vision", true),
@@ -61,52 +60,23 @@ class SettingsManager(context: Context) {
             ModelInfo("deepseek/deepseek-r1", "DeepSeek R1", "Reasoning model", false),
             ModelInfo("qwen/qwen-2.5-72b-instruct", "Qwen 2.5 72B", "Alibaba", false),
             // Free models
-            ModelInfo("nex-agi/deepseek-v3.1-nex-n1:free", "DeepSeek V3 (Free)", "Free tier", false),
+            ModelInfo("deepseek/deepseek-v4-flash:free", "DeepSeek V4 Flash (Free)", "Free tier", false),
             ModelInfo("mistralai/devstral-2512:free", "Devstral (Free)", "Free tier", false),
             ModelInfo("meta-llama/llama-3.2-3b-instruct:free", "Llama 3.2 3B (Free)", "Free tier", false),
         )
         
-        // GitHub Copilot models (updated January 2026)
-        // Note: In GitHub Copilot, vision is NOT supported for: gpt-4.1, gpt-4o, all gemini models
-        val COPILOT_MODELS = listOf(
-            // OpenAI models - NO vision in Copilot for gpt-4.1 and gpt-4o
-            ModelInfo("gpt-4.1", "GPT-4.1", "OpenAI baseline", supportsVision = false),
-            ModelInfo("gpt-4o", "GPT-4o", "OpenAI multimodal", supportsVision = false), // No vision in Copilot!
-            ModelInfo("gpt-5", "GPT-5", "OpenAI flagship", supportsVision = true),
-            ModelInfo("gpt-5-mini", "GPT-5 Mini", "Fast OpenAI", supportsVision = true),
-            ModelInfo("gpt-5.1", "GPT-5.1", "Latest OpenAI", supportsVision = true),
-            ModelInfo("gpt-5.2", "GPT-5.2", "Newest OpenAI", supportsVision = true),
-            ModelInfo("gpt-5.1-codex", "GPT-5.1 Codex", "Code-optimized", supportsVision = false),
-            ModelInfo("gpt-5.1-codex-max", "GPT-5.1 Codex Max", "Best for code", supportsVision = false),
-            // Anthropic Claude models - full vision support
-            ModelInfo("claude-haiku-4.5", "Claude Haiku 4.5", "Fast Claude", supportsVision = true),
-            ModelInfo("claude-sonnet-4", "Claude Sonnet 4", "Balanced Claude", supportsVision = true),
-            ModelInfo("claude-sonnet-4.5", "Claude Sonnet 4.5", "Latest Sonnet", supportsVision = true),
-            ModelInfo("claude-opus-4.5", "Claude Opus 4.5", "Most capable", supportsVision = true),
-            // Google Gemini models - NO vision in Copilot!
-            ModelInfo("gemini-2.5-pro", "Gemini 2.5 Pro", "Google advanced", supportsVision = false),
-            ModelInfo("gemini-3-flash", "Gemini 3 Flash", "Fast Google", supportsVision = false),
-            ModelInfo("gemini-3-pro", "Gemini 3 Pro", "Google flagship", supportsVision = false),
-            // Other
-            ModelInfo("grok-code-fast-1", "Grok Code Fast", "xAI fast coding", supportsVision = false),
-        )
-        
         const val DEFAULT_MODEL = "openai/gpt-4o-mini"
-        const val DEFAULT_COPILOT_MODEL = "gpt-5-mini"
         const val DEFAULT_LANGUAGE = "en"
         
-        val DEFAULT_SYSTEM_PROMPT = """You are a helpful AI assistant on GrapheneOS.
-- Keep responses concise for mobile
-- Use markdown formatting: **bold**, *italic*, `code`, [links](url)
-- When comparing items, use markdown tables for clarity:
-  | Feature | Option A | Option B |
-  |---------|----------|----------|
-  | Price   | $100     | $150     |
-- Use bullet points and numbered lists for organized info
-- If unsure, say so
+        val DEFAULT_SYSTEM_PROMPT = """You are a helpful AI assistant on GrapheneOS (privacy-focused mobile OS).
+- Keep responses concise for mobile reading
+- Use markdown: **bold**, *italic*, `code`, [links](url)
+- Use tables for comparisons, lists for organized info
 - Include URLs when citing sources
+- To open a link, write: [OPEN_URL:https://example.com] (only when explicitly asked)
 - You can analyze screenshots and PDF documents when shared
-- To open a link for the user, write: [OPEN_URL:https://example.com]
+- You have access to current web information when I search for you
+- If unsure, say so honestly
 - Respond in the same language as the user"""
     }
     

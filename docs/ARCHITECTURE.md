@@ -16,8 +16,7 @@ app/src/main/
 │   │   └── GroqTranscriber.kt                  # Cloud-based speech recognition
 │   ├── llm/
 │   │   ├── OpenRouterClient.kt                 # OpenRouter API integration
-│   │   ├── CopilotClient.kt                    # GitHub Copilot API integration
-│   │   └── GitHubCopilotAuth.kt               # OAuth2 authentication
+
 │   ├── search/
 │   │   ├── BraveSearchClient.kt               # Brave Search API integration
 │   │   └── SearchResult.kt                    # Search result models
@@ -78,16 +77,6 @@ app/src/main/
 **Streaming Flow:**
 ```
 User Query → Build Request → Stream Server-Sent Events → Parse JSON → Display Content
-```
-
-#### GitHub Copilot Client
-- Utilizes OAuth2 Device Authorization Grant flow for secure authentication
-- Implements device code authorization where users visit a GitHub URL to approve access
-- Integrates with GitHub Copilot's language model for chat responses
-
-**Authentication Flow:**
-```
-App Requests Device Code → User Authorizes at GitHub URL → App Polls for Access Token → Authenticated API Calls
 ```
 
 ### 4. Search Integration
@@ -155,12 +144,6 @@ User Query → Brave Search → Process Results → Inject into Prompt → Send 
 - Simple API key authentication
 - `Authorization: Bearer <api_key>` header
 - Stored in encrypted Android Keystore
-
-### GitHub Copilot
-- OAuth2 Device Authorization Grant flow
-- User visits GitHub URL to authorize
-- No client secret needed (public client)
-- Tokens cached locally
 
 ### Brave Search
 - Simple API key authentication

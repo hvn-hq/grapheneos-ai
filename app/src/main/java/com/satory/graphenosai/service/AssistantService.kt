@@ -16,11 +16,7 @@ import com.satory.graphenosai.audio.AudioCaptureManager
 import com.satory.graphenosai.audio.SpeechRecognizerManager
 import com.satory.graphenosai.audio.VoskTranscriber
 import com.satory.graphenosai.audio.WhisperTranscriber
-import com.satory.graphenosai.llm.ChatSession
-import com.satory.graphenosai.llm.CopilotClient
-import com.satory.graphenosai.llm.LlamaCppClient
-import com.satory.graphenosai.llm.LocalModelManager
-import com.satory.graphenosai.llm.OpenRouterClient
+import com.satory.graphenosai.llm.*
 import com.satory.graphenosai.search.BraveSearchClient
 import com.satory.graphenosai.search.ExaSearchClient
 import com.satory.graphenosai.search.SearchResult
@@ -29,6 +25,8 @@ import com.satory.graphenosai.tts.TTSManager
 import com.satory.graphenosai.ui.SettingsManager
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * Foreground service managing the AI assistant lifecycle.
@@ -44,7 +42,6 @@ class AssistantService : Service() {
     private lateinit var whisperTranscriber: WhisperTranscriber
     private lateinit var speechRecognizerManager: SpeechRecognizerManager
     lateinit var openRouterClient: OpenRouterClient
-    private lateinit var copilotClient: CopilotClient
     private lateinit var llamaCppClient: LlamaCppClient
     lateinit var localModelManager: LocalModelManager
     private lateinit var braveSearchClient: BraveSearchClient
@@ -179,14 +176,6 @@ class AssistantService : Service() {
         
         openRouterClient = OpenRouterClient(app.secureKeyManager).apply {
             setModel(settingsManager.getEffectiveModel())
-            setSystemPrompt(settingsManager.systemPrompt)
-        }
-        
-        copilotClient = CopilotClient(app.secureKeyManager).apply {
-            setModel(settingsManager.selectedModel.let { 
-                // Convert OpenRouter model ID to Copilot model ID if needed
-                if (it.contains("/")) it.substringAfter("/") else it
-            })
             setSystemPrompt(settingsManager.systemPrompt)
         }
         
@@ -572,7 +561,6 @@ class AssistantService : Service() {
             if (imageBase64 != null) "Describe this image" else return // Can't process empty query without image
         }
         
-        _transcription.value = effectiveQuery
         _assistantState.value = AssistantState.Processing
         
         Log.i(TAG, "Processing query: '$effectiveQuery', hasImage=${imageBase64 != null}, imageLength=${imageBase64?.length}")
@@ -591,11 +579,6 @@ class AssistantService : Service() {
     private fun addUserMessageToChat(query: String, imageBase64: String? = null) {
         val provider = settingsManager.apiProvider
         when (provider) {
-            SettingsManager.PROVIDER_COPILOT -> {
-                copilotClient.chatSession.addUserMessage(query, imageBase64)
-                _chatMessages.value = copilotClient.chatSession.getAllMessages()
-                Log.d(TAG, "Added to Copilot session: '$query', imageLength=${imageBase64?.length}")
-            }
             SettingsManager.PROVIDER_LOCAL -> {
                 llamaCppClient.chatSession.addUserMessage(query, imageBase64)
                 _chatMessages.value = llamaCppClient.chatSession.getAllMessages()
@@ -623,108 +606,169 @@ class AssistantService : Service() {
     }
 
     /**
-     * Main query processing pipeline:
-     * 1. Perform web search if enabled (except for images and local models)
-     * 2. Call LLM with context
-     * 3. Speak response via TTS
+     * Main query processing pipeline using OpenAI-compatible function calling:
+     * 1. Sends streaming request with web_search tool defined
+     * 2. If the model calls web_search → executes search → streams follow-up with results
+     * 3. If no tool call → streams response directly
      */
     private suspend fun processQueryInternal(query: String, imageBase64: String? = null) {
         try {
             val sanitizedQuery = sanitizeQuery(query)
             val isLocal = settingsManager.apiProvider == SettingsManager.PROVIDER_LOCAL
-            
-            var contextSources: List<String> = emptyList()
-            var searchContext: String? = null
-            
-            // Perform web search if enabled, it's a text query, and NOT using local model
-            // Local models work completely offline - no web search
-            if (_webSearchEnabled.value && imageBase64 == null && !isLocal) {
-                _assistantState.value = AssistantState.Searching
-                
-                // Use selected search engine
-                val searchResults: List<SearchResult> = when (settingsManager.searchEngine) {
-                    SettingsManager.SEARCH_EXA -> {
-                        val results = exaSearchClient.search(sanitizedQuery)
-                        Log.i(TAG, "Exa search returned ${results.size} results")
-                        results
-                    }
-                    else -> {
-                        val results = braveSearchClient.search(sanitizedQuery)
-                        Log.i(TAG, "Brave search returned ${results.size} results")
-                        results
-                    }
-                }
-                
-                if (searchResults.isNotEmpty()) {
-                    contextSources = searchResults.map { it.url }
-                    searchContext = searchResults.joinToString("\n\n") { 
-                        "Source: ${it.title}\nURL: ${it.url}\n${it.snippet}"
-                    }
-                }
+
+            if (_webSearchEnabled.value && imageBase64 == null && !isLocal && isSearchConfigured()) {
+                processWithFunctionCalling(imageBase64)
+            } else {
+                streamDirect(sanitizedQuery, imageBase64)
             }
-            
-            val finalContext = searchContext
-            
-            // Query LLM with context
-            streamLLMResponse(sanitizedQuery, finalContext, contextSources, imageBase64)
         } catch (e: Exception) {
             Log.e(TAG, "Query processing error", e)
             _assistantState.value = AssistantState.Error(e.message ?: "Processing failed")
         }
     }
-    
-    private suspend fun streamLLMResponse(
-        query: String,
-        context: String?,
-        sources: List<String>,
-        imageBase64: String? = null
-    ) {
+
+    private fun isSearchConfigured(): Boolean = when (settingsManager.searchEngine) {
+        SettingsManager.SEARCH_EXA -> exaSearchClient.isConfigured()
+        else -> braveSearchClient.isConfigured()
+    }
+
+    /**
+     * Function calling flow: model decides via web_search tool whether to search.
+     */
+    private suspend fun processWithFunctionCalling(imageBase64: String? = null) {
         _assistantState.value = AssistantState.Responding
         _response.value = ""
-        
+
         val fullResponse = StringBuilder()
-        val provider = settingsManager.apiProvider
-        val useCopilot = provider == SettingsManager.PROVIDER_COPILOT
-        val useLocal = provider == SettingsManager.PROVIDER_LOCAL
-        
-        val providerName = when {
-            useLocal -> "Local LLM"
-            useCopilot -> "Copilot"
-            else -> "OpenRouter"
-        }
-        Log.i(TAG, "Starting LLM request with $providerName, hasContext=${context != null}, contextLength=${context?.length ?: 0}")
-        
-        try {
-            // For local models, images are not supported
-            val effectiveImageBase64 = if (useLocal) null else imageBase64
-            
-            // If we have search context, modify the last user message to include it
-            val responseFlow = if (context != null && context.isNotBlank() && !useLocal) {
-                // Build enhanced prompt with search results (not for local models - they work offline)
-                val searchPrompt = """I found the following information from web search. Use this to answer the user's question comprehensively. Don't just list links - synthesize the information into a helpful answer.
+        val tools = WebSearchTool.buildToolsArray()
+        var contextSources: List<String> = emptyList()
+        var detectedCalls: List<ToolCall>? = null
+        var assistantToolMsg: JSONObject? = null
 
---- WEB SEARCH RESULTS ---
-$context
---- END RESULTS ---
-
-Now answer the user's question: $query"""
-                
-                Log.i(TAG, "Using search context: ${context.take(200)}...")
-                
-                // Use streamCompletionDirect which sends the enhanced query without modifying chat history
-                when {
-                    useCopilot -> copilotClient.streamCompletionDirect(searchPrompt, effectiveImageBase64)
-                    else -> openRouterClient.streamCompletionDirect(searchPrompt, effectiveImageBase64)
-                }
-            } else {
-                // No search context - use normal completion (message already in chat history)
-                when {
-                    useLocal -> llamaCppClient.streamCompletion(query, null)
-                    useCopilot -> copilotClient.streamCompletion(query, effectiveImageBase64)
-                    else -> openRouterClient.streamCompletion(query, effectiveImageBase64)
+        // Phase 1: Stream with web_search tool — model decides if search is needed
+        openRouterClient.streamCompletionWithToolSupport(tools, imageBase64)
+            .catch { e ->
+                Log.e(TAG, "Tool streaming error", e)
+                _response.value = "Error: ${e.message}"
+                _assistantState.value = AssistantState.Error(e.message ?: "LLM error")
+            }
+            .collect { event ->
+                when (event) {
+                    is StreamEvent.Content -> {
+                        fullResponse.append(event.text)
+                        _response.value = fullResponse.toString()
+                    }
+                    is StreamEvent.ToolCallsDetected -> {
+                        detectedCalls = event.calls
+                        assistantToolMsg = event.assistantMessage
+                    }
                 }
             }
-            
+
+        // Phase 2: Tool was called — execute search and stream follow-up
+        if (detectedCalls != null && assistantToolMsg != null) {
+            _assistantState.value = AssistantState.Searching
+            Log.i(TAG, "Tool call detected: ${detectedCalls!!.size} call(s)")
+
+            val searchResults = executeSearchFromToolCalls(detectedCalls!!)
+            if (searchResults.isNotEmpty()) {
+                contextSources = searchResults.map { it.url }
+            }
+
+            val followUpMessages = buildToolFollowUpMessages(
+                assistantToolMsg!!,
+                detectedCalls!!,
+                searchResults
+            )
+
+            _assistantState.value = AssistantState.Responding
+
+            openRouterClient.streamWithMessages(followUpMessages, tools)
+                .catch { e ->
+                    Log.e(TAG, "Follow-up streaming error", e)
+                    _response.value = "Error: ${e.message}"
+                }
+                .collect { chunk ->
+                    fullResponse.append(chunk)
+                    _response.value = fullResponse.toString()
+                }
+
+            if (fullResponse.isNotEmpty()) {
+                openRouterClient.chatSession.addAssistantMessage(fullResponse.toString())
+            }
+        }
+
+        // Phase 3: Finalize — sources, URL detection, TTS
+        finalizeResponse(fullResponse.toString(), contextSources)
+    }
+
+    private suspend fun executeSearchFromToolCalls(toolCalls: List<ToolCall>): List<SearchResult> {
+        val results = mutableListOf<SearchResult>()
+        for (tc in toolCalls) {
+            if (tc.function.name == "web_search") {
+                val searchQuery = parseSearchQuery(tc.function.arguments)
+                if (searchQuery.isNotBlank()) {
+                    Log.i(TAG, "Executing web search: '$searchQuery'")
+                    val searchResults = when (settingsManager.searchEngine) {
+                        SettingsManager.SEARCH_EXA -> exaSearchClient.search(searchQuery)
+                        else -> braveSearchClient.search(searchQuery)
+                    }
+                    Log.i(TAG, "Search returned ${searchResults.size} results")
+                    results.addAll(searchResults)
+                }
+            }
+        }
+        return results
+    }
+
+    private fun buildToolFollowUpMessages(
+        assistantMsg: JSONObject,
+        toolCalls: List<ToolCall>,
+        searchResults: List<SearchResult>
+    ): JSONArray {
+        val history = openRouterClient.chatSession.getMessagesForApi(
+            settingsManager.systemPrompt, false
+        )
+
+        val messages = JSONArray()
+        for (i in 0 until history.length()) {
+            messages.put(history.getJSONObject(i))
+        }
+
+        messages.put(assistantMsg)
+
+        for (tc in toolCalls) {
+            val content = if (tc.function.name == "web_search" && searchResults.isNotEmpty()) {
+                searchResults.joinToString("\n\n") {
+                    "Title: ${it.title}\nURL: ${it.url}\n${it.snippet}"
+                }
+            } else {
+                "No results found."
+            }
+            messages.put(buildToolResultMessage(tc.id, content))
+        }
+
+        return messages
+    }
+
+    /**
+     * Direct streaming without function calling (local models or search disabled).
+     */
+    private suspend fun streamDirect(query: String, imageBase64: String? = null) {
+        _assistantState.value = AssistantState.Responding
+        _response.value = ""
+
+        val fullResponse = StringBuilder()
+        val useLocal = settingsManager.apiProvider == SettingsManager.PROVIDER_LOCAL
+
+        try {
+            val effectiveImageBase64 = if (useLocal) null else imageBase64
+
+            val responseFlow = when {
+                useLocal -> llamaCppClient.streamCompletion(query, null)
+                else -> openRouterClient.streamCompletion(query, effectiveImageBase64)
+            }
+
             responseFlow
                 .catch { e ->
                     Log.e(TAG, "LLM streaming error", e)
@@ -735,58 +779,63 @@ Now answer the user's question: $query"""
                     fullResponse.append(chunk)
                     _response.value = fullResponse.toString()
                 }
-            
-            Log.i(TAG, "LLM response complete: ${fullResponse.length} chars")
-            
-            if (fullResponse.isEmpty()) {
-                _response.value = "No response. Check your API key."
-                _assistantState.value = AssistantState.Error("Empty response")
-                return
-            }
-            
-            // Append sources if web search was used (not for local models)
-            if (sources.isNotEmpty() && !useLocal) {
-                val sourcesText = "\n\n📚 Sources:\n" + sources.take(3).mapIndexed { i, url -> 
-                    "${i + 1}. $url" 
-                }.joinToString("\n")
-                fullResponse.append(sourcesText)
-                _response.value = fullResponse.toString()
-            }
-            
-            // Update chat messages for UI (get fresh state after assistant message was added)
-            withContext(Dispatchers.Main) {
-                _chatMessages.value = when {
-                    useLocal -> llamaCppClient.chatSession.getAllMessages()
-                    useCopilot -> copilotClient.chatSession.getAllMessages()
-                    else -> openRouterClient.chatSession.getAllMessages()
-                }
-            }
-            
-            // Check if AI wants to open URLs (not for local models)
-            if (!useLocal) {
-                val responseText = fullResponse.toString()
-                val urlsToOpen = detectUrlsToOpen(responseText)
-                
-                // Always ask user before opening URLs (for safety and user control)
-                if (urlsToOpen.isNotEmpty()) {
-                    _pendingUrls.value = urlsToOpen
-                    Log.i(TAG, "Detected ${urlsToOpen.size} URLs for user approval")
-                }
-            }
-            
-            // Speak the response if enabled
-            if (settingsManager.ttsEnabled) {
-                _assistantState.value = AssistantState.Speaking
-                ttsManager.speak(fullResponse.toString())
-            }
-            
-            _assistantState.value = AssistantState.Complete
-            
+
+            finalizeResponse(fullResponse.toString(), emptyList())
         } catch (e: Exception) {
-            Log.e(TAG, "Error in streamLLMResponse", e)
+            Log.e(TAG, "Error in streamDirect", e)
             _response.value = "Error: ${e.message}"
             _assistantState.value = AssistantState.Error(e.message ?: "Unknown error")
         }
+    }
+
+    /**
+     * Common post-processing after any response: sources, URL detection, TTS, UI update.
+     */
+    private suspend fun finalizeResponse(
+        responseText: String,
+        sources: List<String>
+    ) {
+        if (responseText.isEmpty()) {
+            _response.value = "No response. Check your API key."
+            _assistantState.value = AssistantState.Error("Empty response")
+            return
+        }
+
+        val useLocal = settingsManager.apiProvider == SettingsManager.PROVIDER_LOCAL
+
+        // Append sources if web search was used
+        if (sources.isNotEmpty() && !useLocal) {
+            val sourcesText = "\n\n📚 Sources:\n" + sources.take(3).mapIndexed { i, url ->
+                "${i + 1}. $url"
+            }.joinToString("\n")
+            val finalText = responseText + sourcesText
+            _response.value = finalText
+        }
+
+        // Update chat messages for UI
+        withContext(Dispatchers.Main) {
+            _chatMessages.value = when {
+                useLocal -> llamaCppClient.chatSession.getAllMessages()
+                else -> openRouterClient.chatSession.getAllMessages()
+            }
+        }
+
+        // URL detection
+        if (!useLocal) {
+            val urlsToOpen = detectUrlsToOpen(responseText)
+            if (urlsToOpen.isNotEmpty()) {
+                _pendingUrls.value = urlsToOpen
+                Log.i(TAG, "Detected ${urlsToOpen.size} URLs for user approval")
+            }
+        }
+
+        // TTS
+        if (settingsManager.ttsEnabled) {
+            _assistantState.value = AssistantState.Speaking
+            ttsManager.speak(responseText)
+        }
+
+        _assistantState.value = AssistantState.Complete
     }
     
     /**
@@ -812,7 +861,6 @@ Now answer the user's question: $query"""
         _currentChatId = null
         
         openRouterClient.clearSession()
-        copilotClient.clearSession()
         llamaCppClient.clearSession()
         _chatMessages.value = emptyList()
         _response.value = ""
@@ -837,7 +885,6 @@ Now answer the user's question: $query"""
         // Load messages into active session
         val provider = settingsManager.apiProvider
         val session = when (provider) {
-            SettingsManager.PROVIDER_COPILOT -> copilotClient.chatSession
             SettingsManager.PROVIDER_LOCAL -> llamaCppClient.chatSession
             else -> openRouterClient.chatSession
         }
@@ -868,7 +915,7 @@ Now answer the user's question: $query"""
                 Log.i(TAG, "Initializing local model: $modelName at $modelPath")
                 
                 llamaCppClient.initialize()
-                val result = llamaCppClient.loadModel(modelPath, modelName)
+                val result = llamaCppClient.loadModel(modelPath, modelName, modelInfo?.promptFormat ?: "chatml")
                 
                 result.fold(
                     onSuccess = {
@@ -899,7 +946,7 @@ Now answer the user's question: $query"""
                 
                 // Load new model
                 llamaCppClient.contextSize = modelInfo?.contextSize ?: 2048
-                val result = llamaCppClient.loadModel(modelPath, modelName)
+                val result = llamaCppClient.loadModel(modelPath, modelName, modelInfo?.promptFormat ?: "chatml")
                 
                 result.fold(
                     onSuccess = {
@@ -930,12 +977,6 @@ Now answer the user's question: $query"""
         openRouterClient.setModel(effectiveModel)
         openRouterClient.setSystemPrompt(settingsManager.systemPrompt)
         
-        val copilotModel = effectiveModel.let { 
-            if (it.contains("/")) it.substringAfter("/") else it 
-        }
-        copilotClient.setModel(copilotModel)
-        copilotClient.setSystemPrompt(settingsManager.systemPrompt)
-        
         // Update local model system prompt
         llamaCppClient.setSystemPrompt(settingsManager.systemPrompt)
         
@@ -946,7 +987,7 @@ Now answer the user's question: $query"""
             }
         }
         
-        Log.i(TAG, "Model set to: $effectiveModel (Copilot: $copilotModel)")
+        Log.i(TAG, "Model set to: $effectiveModel")
         
         // Reload voice language
         serviceScope.launch(Dispatchers.IO) {

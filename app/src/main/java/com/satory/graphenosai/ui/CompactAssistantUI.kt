@@ -219,24 +219,16 @@ fun CompactAssistantView(
         }
     }
     
-    // Check vision support - works for both Copilot and OpenRouter (not Local)
-    val isCopilot = service.settingsManager.apiProvider == SettingsManager.PROVIDER_COPILOT
+    // Check vision support - works for OpenRouter (not Local)
     val currentModel = if (isLocalProvider) service.settingsManager.localModelId else service.settingsManager.selectedModel
     // For local provider, we don't use cloud model lists
     val currentModelInfo = if (isLocalProvider) null else {
-        val modelList = if (isCopilot) SettingsManager.COPILOT_MODELS else SettingsManager.AVAILABLE_MODELS
-        modelList.find { it.id == currentModel }
+        SettingsManager.AVAILABLE_MODELS.find { it.id == currentModel }
     }
-    // Vision supported if: Copilot model with vision, or OpenRouter vision-capable model (not Local)
+    // Vision supported if: OpenRouter vision-capable model (not Local)
     val supportsVision = when {
         isLocalProvider -> false  // Local models don't support vision
-        isCopilot -> currentModelInfo?.supportsVision == true
         else -> service.openRouterClient.isVisionCapable()
-    }
-    
-    // Debug logging
-    LaunchedEffect(isCopilot, currentModel, supportsVision, isLocalProvider) {
-        android.util.Log.d("CompactAssistantUI", "Vision check: isCopilot=$isCopilot, isLocal=$isLocalProvider, model=$currentModel, modelInfo=$currentModelInfo, supportsVision=$supportsVision")
     }
     
     // PDF picker launcher
@@ -733,20 +725,23 @@ fun FullChatScreen(
             if (service.settingsManager.apiProvider == SettingsManager.PROVIDER_LOCAL)
                 service.settingsManager.localModelId
             else
-                service.settingsManager.selectedModel
+                service.settingsManager.getEffectiveModel()
         )
     }
-    val isCopilot = service.settingsManager.apiProvider == SettingsManager.PROVIDER_COPILOT
     val isLocalProvider = service.settingsManager.apiProvider == SettingsManager.PROVIDER_LOCAL
     // For local provider, we don't use cloud model lists
     val currentModelInfo = if (isLocalProvider) null else {
-        val modelList = if (isCopilot) SettingsManager.COPILOT_MODELS else SettingsManager.AVAILABLE_MODELS
-        modelList.find { it.id == currentModel }
+        SettingsManager.AVAILABLE_MODELS.find { it.id == currentModel }
     }
-    // Vision supported if: Copilot model with vision, or OpenRouter vision-capable model (not Local)
+    val currentModelDisplayName = if (isLocalProvider) {
+        com.satory.graphenosai.llm.LocalModelManager.AVAILABLE_MODELS
+            .find { it.id == currentModel }?.name ?: currentModel
+    } else {
+        currentModelInfo?.name ?: currentModel
+    }
+    // Vision supported if: OpenRouter vision-capable model (not Local)
     val supportsVision = when {
         isLocalProvider -> false
-        isCopilot -> currentModelInfo?.supportsVision == true
         else -> service.openRouterClient.isVisionCapable()
     }
     
@@ -893,67 +888,144 @@ fun FullChatScreen(
                 }
             )
         } else {
-            // Cloud models dialog (Copilot / OpenRouter)
-            val cloudModelList = if (isCopilot) SettingsManager.COPILOT_MODELS else SettingsManager.AVAILABLE_MODELS
-            AlertDialog(
-                onDismissRequest = { showModelDialog = false },
-                title = { Text("Select Model") },
-                text = {
-                    Column(
-                        modifier = Modifier.verticalScroll(rememberScrollState())
-                    ) {
-                        cloudModelList.forEach { model ->
+            var showCustomInput by remember { mutableStateOf(false) }
+            val cloudModelList = SettingsManager.AVAILABLE_MODELS
+            
+            if (showCustomInput) {
+                var customModelText by remember { mutableStateOf(service.settingsManager.customModelId) }
+                AlertDialog(
+                    onDismissRequest = { showCustomInput = false },
+                    title = { Text("Custom Model ID") },
+                    text = {
+                        Column {
+                            Text(
+                                "Enter any OpenRouter model ID",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            OutlinedTextField(
+                                value = customModelText,
+                                onValueChange = { customModelText = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                label = { Text("Model ID") },
+                                placeholder = { Text("provider/model-name") },
+                                singleLine = true
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                val trimmed = customModelText.trim()
+                                if (trimmed.isNotBlank()) {
+                                    currentModel = trimmed
+                                    service.settingsManager.customModelId = trimmed
+                                    service.reloadSettings()
+                                }
+                                showCustomInput = false
+                                showModelDialog = false
+                            }
+                        ) { Text("Save") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showCustomInput = false }) {
+                            Text("Cancel")
+                        }
+                    }
+                )
+            } else {
+                AlertDialog(
+                    onDismissRequest = { showModelDialog = false },
+                    title = { Text("Select Model") },
+                    text = {
+                        Column(
+                            modifier = Modifier.verticalScroll(rememberScrollState())
+                        ) {
+                            cloudModelList.forEach { model ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            currentModel = model.id
+                                            service.settingsManager.selectedModel = model.id
+                                            service.settingsManager.customModelId = ""
+                                            service.reloadSettings()
+                                            showModelDialog = false
+                                        }
+                                        .padding(vertical = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    RadioButton(
+                                        selected = currentModel == model.id,
+                                        onClick = {
+                                            currentModel = model.id
+                                            service.settingsManager.selectedModel = model.id
+                                            service.settingsManager.customModelId = ""
+                                            service.reloadSettings()
+                                            showModelDialog = false
+                                        }
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(model.name, fontWeight = FontWeight.Medium)
+                                            if (model.supportsVision) {
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Icon(
+                                                    Icons.Default.Image,
+                                                    contentDescription = "Supports images",
+                                                    modifier = Modifier.size(16.dp),
+                                                    tint = MaterialTheme.colorScheme.primary
+                                                )
+                                            }
+                                        }
+                                        Text(
+                                            model.description,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                            
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable {
-                                        currentModel = model.id
-                                        service.settingsManager.selectedModel = model.id
-                                        service.reloadSettings()
-                                        showModelDialog = false
-                                    }
+                                    .clickable { showCustomInput = true }
                                     .padding(vertical = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 RadioButton(
-                                    selected = currentModel == model.id,
-                                    onClick = {
-                                        currentModel = model.id
-                                        service.settingsManager.selectedModel = model.id
-                                        service.reloadSettings()
-                                        showModelDialog = false
-                                    }
+                                    selected = service.settingsManager.customModelId.isNotBlank(),
+                                    onClick = { showCustomInput = true }
                                 )
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Column {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(model.name, fontWeight = FontWeight.Medium)
-                                        if (model.supportsVision && isCopilot) {
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Icon(
-                                                Icons.Default.Image,
-                                                contentDescription = "Supports images",
-                                                modifier = Modifier.size(16.dp),
-                                                tint = MaterialTheme.colorScheme.primary
-                                            )
-                                        }
-                                    }
                                     Text(
-                                        model.description,
+                                        "Custom model...",
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Text(
+                                        if (service.settingsManager.customModelId.isNotBlank())
+                                            service.settingsManager.customModelId
+                                        else "Enter any OpenRouter model ID",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                             }
                         }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { showModelDialog = false }) {
+                            Text("Cancel")
+                        }
                     }
-                },
-                confirmButton = {
-                    TextButton(onClick = { showModelDialog = false }) {
-                        Text("Cancel")
-                    }
-                }
-            )
+                )
+            }
         }
     }
     
@@ -966,7 +1038,7 @@ fun FullChatScreen(
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                currentModelInfo?.name ?: "AI Assistant",
+                                currentModelDisplayName,
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold
                             )

@@ -168,20 +168,9 @@ fun MainScreen(
     val settingsManager = remember { SettingsManager(context) }
     
     // Check API based on current provider
-    var hasApiKeyOpenRouter by remember { mutableStateOf(app.secureKeyManager.hasOpenRouterApiKey()) }
-    var hasApiKeyCopilot by remember { mutableStateOf(app.secureKeyManager.hasCopilotToken()) }
+    var hasApiKey by remember { mutableStateOf(app.secureKeyManager.hasOpenRouterApiKey()) }
     
-    val hasApiKey = if (settingsManager.apiProvider == SettingsManager.PROVIDER_COPILOT) {
-        hasApiKeyCopilot
-    } else {
-        hasApiKeyOpenRouter
-    }
-    
-    val apiKeyDescription = if (settingsManager.apiProvider == SettingsManager.PROVIDER_COPILOT) {
-        if (hasApiKeyCopilot) "GitHub Copilot configured" else "GitHub Copilot not configured"
-    } else {
-        if (hasApiKeyOpenRouter) "OpenRouter configured" else "OpenRouter not configured"
-    }
+    val apiKeyDescription = if (hasApiKey) "OpenRouter configured" else "OpenRouter not configured"
     
     val isAccessibilityEnabled = AssistantAccessibilityService.isServiceRunning
     
@@ -346,7 +335,7 @@ fun MainScreen(
             // API Key Input (if not configured)
             if (!hasApiKey) {
                 ApiKeyInputCard(
-                    onApiKeySaved = { hasApiKeyOpenRouter = true }
+                    onApiKeySaved = { hasApiKey = true }
                 )
             }
         }

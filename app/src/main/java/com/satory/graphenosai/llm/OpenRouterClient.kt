@@ -48,14 +48,15 @@ class OpenRouterClient(
             "meta-llama/llama-3-8b-instruct"
         )
         
-        const val DEFAULT_SYSTEM_PROMPT = """You are a helpful AI assistant on GrapheneOS (privacy-focused Android).
-Keep responses concise for mobile reading.
-Use markdown for formatting.
-If unsure, say so honestly.
-When you find useful links, include them.
-If user asks to open a link, respond with the URL like: [OPEN_URL:https://example.com]
-You can analyze screenshots when the user shares their screen.
-Respond in the same language as the user."""
+        const val DEFAULT_SYSTEM_PROMPT = """You are a helpful AI assistant on GrapheneOS (privacy-focused mobile OS).
+- Keep responses concise for mobile reading
+- Use markdown: **bold**, *italic*, `code`, [links](url)
+- Include URLs when citing sources
+- To open a link, write: [OPEN_URL:https://example.com] (only when explicitly asked)
+- You can analyze screenshots when shared
+- You have access to current web information when I search for you
+- If unsure, say so honestly
+- Respond in the same language as the user"""
     }
 
     private var currentModel: String = modelOverride ?: DEFAULT_MODEL
@@ -443,6 +444,205 @@ Respond in the same language as the user."""
     }.flowOn(Dispatchers.IO)
 
     /**
+     * Stream with function/tool calling support. Parses SSE for both
+     * content chunks and tool_calls. When the model requests a tool,
+     * emits ToolCallsDetected after the stream ends.
+     */
+    fun streamCompletionWithToolSupport(
+        tools: JSONArray? = null,
+        imageBase64: String? = null
+    ): Flow<StreamEvent> = flow {
+        val apiKey = keyManager.getOpenRouterApiKey()
+        if (apiKey.isNullOrBlank()) {
+            emit(StreamEvent.Content("[API key not configured. Add your key in Settings.]"))
+            return@flow
+        }
+
+        val hasImage = imageBase64 != null
+        val messages = chatSession.getMessagesForApi(currentSystemPrompt, hasImage)
+        val requestBody = buildRequestBody(messages, stream = true, tools = tools)
+
+        Log.i(TAG, "Streaming with tools (${chatSession.messageCount()} messages)")
+
+        val connection = createConnection(apiKey)
+        val responseBuilder = StringBuilder()
+        val toolCallsByIndex = mutableMapOf<Int, JSONObject>()
+        var finishReason: String? = null
+
+        try {
+            connection.outputStream.use { os ->
+                os.write(requestBody.toByteArray(Charsets.UTF_8))
+            }
+
+            val responseCode = connection.responseCode
+
+            if (responseCode != HttpsURLConnection.HTTP_OK) {
+                val errorBody = try {
+                    connection.errorStream?.bufferedReader()?.readText() ?: "Unknown error"
+                } catch (e: Exception) { "Error: ${e.message}" }
+                Log.e(TAG, "API error $responseCode: $errorBody")
+                emit(StreamEvent.Content("[Error $responseCode: $errorBody]"))
+                return@flow
+            }
+
+            BufferedReader(InputStreamReader(connection.inputStream)).use { reader ->
+                var line: String?
+                while (reader.readLine().also { line = it } != null) {
+                    if (line!!.startsWith("data: ")) {
+                        val data = line!!.removePrefix("data: ").trim()
+
+                        if (data == "[DONE]") break
+                        if (data.isEmpty()) continue
+
+                        try {
+                            val json = JSONObject(data)
+                            val choices = json.optJSONArray("choices")
+                            if (choices != null && choices.length() > 0) {
+                                val choice = choices.getJSONObject(0)
+                                val delta = choice.optJSONObject("delta")
+
+                                // Track finish_reason
+                                if (choice.has("finish_reason") && !choice.isNull("finish_reason")) {
+                                    finishReason = choice.optString("finish_reason", null)
+                                }
+
+                                // Parse content (type-safe: only accept actual String values)
+                                if (delta != null) {
+                                    val contentObj = delta.opt("content")
+                                    if (contentObj is String && contentObj.isNotEmpty()) {
+                                        responseBuilder.append(contentObj)
+                                        emit(StreamEvent.Content(contentObj))
+                                    }
+                                }
+
+                                // Parse tool_calls from delta
+                                if (delta != null && delta.has("tool_calls")) {
+                                    val tcs = delta.getJSONArray("tool_calls")
+                                    for (i in 0 until tcs.length()) {
+                                        val tc = tcs.getJSONObject(i)
+                                        val idx = tc.optInt("index", 0)
+                                        val existing = toolCallsByIndex[idx] ?: JSONObject()
+                                        mergeToolCallDelta(existing, tc)
+                                        toolCallsByIndex[idx] = existing
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Parse error: $data")
+                        }
+                    }
+                }
+            }
+
+            // Check if tool calls were requested
+            if (finishReason == "tool_calls" && toolCallsByIndex.isNotEmpty()) {
+                val calls = mutableListOf<ToolCall>()
+                for (idx in 0 until toolCallsByIndex.size) {
+                    val tc = toolCallsByIndex[idx] ?: continue
+                    val callId = tc.optString("id", "")
+                    val funcName = tc.optJSONObject("function")?.optString("name", "") ?: ""
+                    val funcArgs = tc.optJSONObject("function")?.optString("arguments", "{}") ?: "{}"
+                    if (callId.isNotEmpty() && funcName.isNotEmpty()) {
+                        calls.add(ToolCall(callId, "function", ToolFunctionCall(funcName, funcArgs)))
+                    }
+                }
+
+                if (calls.isNotEmpty()) {
+                    val assistantMsg = buildToolAssistantMessage(calls)
+                    emit(StreamEvent.ToolCallsDetected(assistantMsg, calls))
+                    return@flow
+                }
+            }
+
+            // No tool calls — add assistant response to session normally
+            if (responseBuilder.isNotEmpty()) {
+                chatSession.addAssistantMessage(responseBuilder.toString())
+            }
+
+        } catch (e: java.net.UnknownHostException) {
+            emit(StreamEvent.Content("[No internet connection]"))
+        } catch (e: java.net.SocketTimeoutException) {
+            emit(StreamEvent.Content("[Request timed out]"))
+        } catch (e: Exception) {
+            Log.e(TAG, "Stream error", e)
+            emit(StreamEvent.Content("[Error: ${e.message}]"))
+        } finally {
+            connection.disconnect()
+        }
+    }.flowOn(Dispatchers.IO)
+
+    /**
+     * Stream with an explicit messages array (bypasses chatSession).
+     * Used for follow-up requests after tool execution.
+     * The caller is responsible for managing message history.
+     */
+    fun streamWithMessages(
+        messages: JSONArray,
+        tools: JSONArray? = null
+    ): Flow<String> = flow {
+        val apiKey = keyManager.getOpenRouterApiKey()
+        if (apiKey.isNullOrBlank()) {
+            emit("[API key not configured. Add your key in Settings.]")
+            return@flow
+        }
+
+        val requestBody = buildRequestBody(messages, stream = true, tools = tools)
+        Log.i(TAG, "Streaming with explicit messages (${messages.length()} messages)")
+
+        val connection = createConnection(apiKey)
+        val responseBuilder = StringBuilder()
+
+        try {
+            connection.outputStream.use { os ->
+                os.write(requestBody.toByteArray(Charsets.UTF_8))
+            }
+
+            val responseCode = connection.responseCode
+            if (responseCode != HttpsURLConnection.HTTP_OK) {
+                val errorBody = try {
+                    connection.errorStream?.bufferedReader()?.readText() ?: "Unknown error"
+                } catch (e: Exception) { "Error: ${e.message}" }
+                Log.e(TAG, "API error $responseCode: $errorBody")
+                emit("[Error $responseCode: $errorBody]")
+                return@flow
+            }
+
+            BufferedReader(InputStreamReader(connection.inputStream)).use { reader ->
+                var line: String?
+                while (reader.readLine().also { line = it } != null) {
+                    if (line!!.startsWith("data: ")) {
+                        val data = line!!.removePrefix("data: ").trim()
+                        if (data == "[DONE]") break
+                        if (data.isEmpty()) continue
+                        try {
+                            val json = JSONObject(data)
+                            val choices = json.optJSONArray("choices")
+                            if (choices != null && choices.length() > 0) {
+                                val delta = choices.getJSONObject(0).optJSONObject("delta")
+                                val contentObj = delta?.opt("content")
+                                val content = if (contentObj is String) contentObj else ""
+                                if (content.isNotEmpty()) {
+                                    responseBuilder.append(content)
+                                    emit(content)
+                                }
+                            }
+                        } catch (e: Exception) { }
+                    }
+                }
+            }
+        } catch (e: java.net.UnknownHostException) {
+            emit("[No internet connection]")
+        } catch (e: java.net.SocketTimeoutException) {
+            emit("[Request timed out]")
+        } catch (e: Exception) {
+            Log.e(TAG, "Streaming error", e)
+            emit("[Error: ${e.message}]")
+        } finally {
+            connection.disconnect()
+        }
+    }.flowOn(Dispatchers.IO)
+
+    /**
      * Legacy stream completion (without session).
      */
     fun streamCompletion(
@@ -542,6 +742,32 @@ Respond in the same language as the user."""
         }
     }
 
+    /**
+     * Merge a partial tool call delta into the accumulator.
+     * SSE streams deliver tool_calls in chunks; each chunk may have
+     * only some fields populated (e.g. arguments appended incrementally).
+     */
+    private fun mergeToolCallDelta(acc: JSONObject, delta: JSONObject) {
+        if (delta.has("id") && !delta.isNull("id")) {
+            acc.put("id", delta.getString("id"))
+        }
+        if (delta.has("type") && !delta.isNull("type")) {
+            acc.put("type", delta.getString("type"))
+        }
+        if (delta.has("function")) {
+            val fnDelta = delta.getJSONObject("function")
+            val fnAcc = if (acc.has("function")) acc.getJSONObject("function") else JSONObject()
+            if (fnDelta.has("name") && !fnDelta.isNull("name")) {
+                fnAcc.put("name", fnDelta.getString("name"))
+            }
+            if (fnDelta.has("arguments") && !fnDelta.isNull("arguments")) {
+                val prevArgs = fnAcc.optString("arguments", "")
+                fnAcc.put("arguments", prevArgs + fnDelta.getString("arguments"))
+            }
+            acc.put("function", fnAcc)
+        }
+    }
+
     private fun createConnection(apiKey: String): HttpsURLConnection {
         val url = URL(BASE_URL)
         return (url.openConnection() as HttpsURLConnection).apply {
@@ -585,13 +811,17 @@ Respond in the same language as the user."""
         return messages
     }
 
-    private fun buildRequestBody(messages: JSONArray, stream: Boolean): String {
+    private fun buildRequestBody(messages: JSONArray, stream: Boolean, tools: JSONArray? = null): String {
         return JSONObject().apply {
             put("model", currentModel)
             put("messages", messages)
             put("max_tokens", MAX_TOKENS)
             put("temperature", TEMPERATURE.toDouble())
             put("stream", stream)
+            if (tools != null) {
+                put("tools", tools)
+                put("tool_choice", "auto")
+            }
             put("safe_mode", true)
             put("provider", JSONObject().apply {
                 put("allow_fallbacks", true)

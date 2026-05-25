@@ -10,7 +10,7 @@ import kotlinx.coroutines.withContext
 
 /**
  * Kotlin client for llama.cpp local inference
- * Mirrors the interface of OpenRouterClient and CopilotClient
+ * Mirrors the interface of OpenRouterClient
  */
 class LlamaCppClient {
 
@@ -30,7 +30,7 @@ class LlamaCppClient {
         const val DEFAULT_MAX_TOKENS = 512
         
         // ChatML stop tokens to filter from output
-        private val STOP_TOKENS = listOf(
+        private val STOP_TOKENS_CHATML = listOf(
             "<|im_end|>",
             "<|im_start|>",
             "<|im_start|>user",
@@ -40,26 +40,39 @@ class LlamaCppClient {
             "<|eot_id|>",
             "<|end|>"
         )
+
+        // Gemma format stop tokens
+        private val STOP_TOKENS_GEMMA = listOf(
+            "<end_of_turn>",
+            "<start_of_turn>",
+            "<turn|>",
+            "<|think|>"
+        )
         
         // Default system prompt for local models
         const val DEFAULT_SYSTEM_PROMPT = """You are a helpful AI assistant running locally on GrapheneOS.
 - Keep responses concise for mobile reading
 - Use markdown for formatting
-- You work completely offline - no internet connection needed
+- You work completely offline with no internet access
+- If asked about current events or realtime information, say you're offline
 - If unsure, say so honestly
 - Respond in the same language as the user"""
         
         /**
-         * Clean output by removing any ChatML tokens that leaked through
+         * Clean output by removing any format tokens that leaked through
          */
-        fun cleanOutput(text: String): String {
+        fun cleanOutput(text: String, format: String = "chatml"): String {
             var cleaned = text
-            for (token in STOP_TOKENS) {
+            val tokens = if (format == "gemma") STOP_TOKENS_GEMMA else STOP_TOKENS_CHATML
+            for (token in tokens) {
                 cleaned = cleaned.replace(token, "")
             }
-            // Also remove partial tokens
-            cleaned = cleaned.replace(Regex("<\\|im_[^>]*>?"), "")
-            cleaned = cleaned.replace(Regex("<\\|[^>]*\\|>"), "")
+            if (format == "chatml") {
+                cleaned = cleaned.replace(Regex("<\\|im_[^>]*>?"), "")
+                cleaned = cleaned.replace(Regex("<\\|[^>]*\\|>"), "")
+            } else {
+                cleaned = cleaned.replace(Regex("<[^>]*>"), "")
+            }
             return cleaned.trim()
         }
     }
@@ -70,6 +83,7 @@ class LlamaCppClient {
     // Current model info
     private var currentModelPath: String? = null
     private var currentModelName: String = "Local Model"
+    private var currentModelFormat: String = "chatml"
     private var systemPrompt: String = DEFAULT_SYSTEM_PROMPT
     
     // Generation parameters
@@ -78,6 +92,13 @@ class LlamaCppClient {
     var maxTokens: Int = DEFAULT_MAX_TOKENS
     var contextSize: Int = DEFAULT_CONTEXT_SIZE
     
+    /**
+     * Get the active stop tokens based on current model format
+     */
+    private fun getStopTokens(): List<String> {
+        return if (currentModelFormat == "gemma") STOP_TOKENS_GEMMA else STOP_TOKENS_CHATML
+    }
+
     /**
      * Check if llama.cpp is available on this device
      */
@@ -97,7 +118,7 @@ class LlamaCppClient {
     /**
      * Load a GGUF model from file
      */
-    suspend fun loadModel(modelPath: String, modelName: String = "Local Model"): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun loadModel(modelPath: String, modelName: String = "Local Model", modelFormat: String = "chatml"): Result<Unit> = withContext(Dispatchers.IO) {
         if (!LlamaCppBridge.isAvailable()) {
             return@withContext Result.failure(Exception("Native library not available"))
         }
@@ -117,6 +138,7 @@ class LlamaCppClient {
         if (success) {
             currentModelPath = modelPath
             currentModelName = modelName
+            currentModelFormat = modelFormat
             Log.i(TAG, "Model loaded successfully: $modelName")
             Result.success(Unit)
         } else {
@@ -192,8 +214,8 @@ class LlamaCppClient {
                 tokenBuffer.append(token)
                 val bufferStr = tokenBuffer.toString()
                 
-                // Check for stop sequences
-                for (stopToken in STOP_TOKENS) {
+                val activeStopTokens = getStopTokens()
+                for (stopToken in activeStopTokens) {
                     if (bufferStr.contains(stopToken)) {
                         shouldStop = true
                         // Send only the part before the stop token
@@ -211,7 +233,7 @@ class LlamaCppClient {
                 
                 // Check for partial stop sequence at end - hold back potential matches
                 var holdBack = 0
-                for (stopToken in STOP_TOKENS) {
+                for (stopToken in activeStopTokens) {
                     for (i in 1 until minOf(stopToken.length, bufferStr.length + 1)) {
                         if (bufferStr.endsWith(stopToken.substring(0, i))) {
                             holdBack = maxOf(holdBack, i)
@@ -238,7 +260,7 @@ class LlamaCppClient {
         )
         
         // Clean and add assistant response to session
-        val cleanedResult = cleanOutput(result)
+        val cleanedResult = cleanOutput(result, currentModelFormat)
         chatSession.addAssistantMessage(cleanedResult)
         
         close()
@@ -275,8 +297,8 @@ class LlamaCppClient {
                 tokenBuffer.append(token)
                 val bufferStr = tokenBuffer.toString()
                 
-                // Check for stop sequences
-                for (stopToken in STOP_TOKENS) {
+                val activeStopTokens = getStopTokens()
+                for (stopToken in activeStopTokens) {
                     if (bufferStr.contains(stopToken)) {
                         shouldStop = true
                         val idx = bufferStr.indexOf(stopToken)
@@ -290,7 +312,7 @@ class LlamaCppClient {
                 
                 // Check for partial stop sequence at end
                 var holdBack = 0
-                for (stopToken in STOP_TOKENS) {
+                for (stopToken in activeStopTokens) {
                     for (i in 1 until minOf(stopToken.length, bufferStr.length + 1)) {
                         if (bufferStr.endsWith(stopToken.substring(0, i))) {
                             holdBack = maxOf(holdBack, i)
@@ -316,7 +338,7 @@ class LlamaCppClient {
         )
         
         // Clean and add assistant response to session
-        val cleanedResult = cleanOutput(result)
+        val cleanedResult = cleanOutput(result, currentModelFormat)
         chatSession.addAssistantMessage(cleanedResult)
         close()
         
@@ -356,39 +378,62 @@ class LlamaCppClient {
     
     /**
      * Build a full prompt including system prompt and chat history
-     * Uses ChatML format for best compatibility with instruction-tuned models
+     * Supports ChatML and Gemma prompt formats
      */
     private fun buildPrompt(userQuery: String): String {
         val sb = StringBuilder()
         
-        // System prompt
-        sb.append("<|im_start|>system\n")
-        sb.append(systemPrompt)
-        sb.append("<|im_end|>\n")
-        
-        // Chat history
-        for (msg in chatSession.getAllMessages()) {
-            when (msg.role) {
-                "user" -> {
-                    sb.append("<|im_start|>user\n")
-                    sb.append(msg.content)
-                    sb.append("<|im_end|>\n")
-                }
-                "assistant" -> {
-                    sb.append("<|im_start|>assistant\n")
-                    sb.append(msg.content)
-                    sb.append("<|im_end|>\n")
+        if (currentModelFormat == "gemma") {
+            // Gemma format
+            sb.append("<start_of_turn>system\n")
+            sb.append(systemPrompt)
+            sb.append("<end_of_turn>\n")
+            
+            for (msg in chatSession.getAllMessages()) {
+                when (msg.role) {
+                    "user" -> {
+                        sb.append("<start_of_turn>user\n")
+                        sb.append(msg.content)
+                        sb.append("<end_of_turn>\n")
+                    }
+                    "assistant" -> {
+                        sb.append("<start_of_turn>model\n")
+                        sb.append(msg.content)
+                        sb.append("<end_of_turn>\n")
+                    }
                 }
             }
+            
+            sb.append("<start_of_turn>user\n")
+            sb.append(userQuery)
+            sb.append("<end_of_turn>\n")
+            sb.append("<start_of_turn>model\n")
+        } else {
+            // ChatML format
+            sb.append("<|im_start|>system\n")
+            sb.append(systemPrompt)
+            sb.append("<|im_end|>\n")
+            
+            for (msg in chatSession.getAllMessages()) {
+                when (msg.role) {
+                    "user" -> {
+                        sb.append("<|im_start|>user\n")
+                        sb.append(msg.content)
+                        sb.append("<|im_end|>\n")
+                    }
+                    "assistant" -> {
+                        sb.append("<|im_start|>assistant\n")
+                        sb.append(msg.content)
+                        sb.append("<|im_end|>\n")
+                    }
+                }
+            }
+            
+            sb.append("<|im_start|>user\n")
+            sb.append(userQuery)
+            sb.append("<|im_end|>\n")
+            sb.append("<|im_start|>assistant\n")
         }
-        
-        // New user message
-        sb.append("<|im_start|>user\n")
-        sb.append(userQuery)
-        sb.append("<|im_end|>\n")
-        
-        // Start assistant response
-        sb.append("<|im_start|>assistant\n")
         
         return sb.toString()
     }
@@ -399,36 +444,59 @@ class LlamaCppClient {
     private fun buildPromptFromContext(enhancedPrompt: String): String {
         val sb = StringBuilder()
         
-        // System prompt
-        sb.append("<|im_start|>system\n")
-        sb.append(systemPrompt)
-        sb.append("<|im_end|>\n")
-        
-        // Previous messages (excluding the last user message which is enhanced)
-        val messages = chatSession.getAllMessages()
-        for (i in 0 until maxOf(0, messages.size - 1)) {
-            val msg = messages[i]
-            when (msg.role) {
-                "user" -> {
-                    sb.append("<|im_start|>user\n")
-                    sb.append(msg.content)
-                    sb.append("<|im_end|>\n")
-                }
-                "assistant" -> {
-                    sb.append("<|im_start|>assistant\n")
-                    sb.append(msg.content)
-                    sb.append("<|im_end|>\n")
+        if (currentModelFormat == "gemma") {
+            sb.append("<start_of_turn>system\n")
+            sb.append(systemPrompt)
+            sb.append("<end_of_turn>\n")
+            
+            val messages = chatSession.getAllMessages()
+            for (i in 0 until maxOf(0, messages.size - 1)) {
+                val msg = messages[i]
+                when (msg.role) {
+                    "user" -> {
+                        sb.append("<start_of_turn>user\n")
+                        sb.append(msg.content)
+                        sb.append("<end_of_turn>\n")
+                    }
+                    "assistant" -> {
+                        sb.append("<start_of_turn>model\n")
+                        sb.append(msg.content)
+                        sb.append("<end_of_turn>\n")
+                    }
                 }
             }
+            
+            sb.append("<start_of_turn>user\n")
+            sb.append(enhancedPrompt)
+            sb.append("<end_of_turn>\n")
+            sb.append("<start_of_turn>model\n")
+        } else {
+            sb.append("<|im_start|>system\n")
+            sb.append(systemPrompt)
+            sb.append("<|im_end|>\n")
+            
+            val messages = chatSession.getAllMessages()
+            for (i in 0 until maxOf(0, messages.size - 1)) {
+                val msg = messages[i]
+                when (msg.role) {
+                    "user" -> {
+                        sb.append("<|im_start|>user\n")
+                        sb.append(msg.content)
+                        sb.append("<|im_end|>\n")
+                    }
+                    "assistant" -> {
+                        sb.append("<|im_start|>assistant\n")
+                        sb.append(msg.content)
+                        sb.append("<|im_end|>\n")
+                    }
+                }
+            }
+            
+            sb.append("<|im_start|>user\n")
+            sb.append(enhancedPrompt)
+            sb.append("<|im_end|>\n")
+            sb.append("<|im_start|>assistant\n")
         }
-        
-        // Enhanced prompt with search results
-        sb.append("<|im_start|>user\n")
-        sb.append(enhancedPrompt)
-        sb.append("<|im_end|>\n")
-        
-        // Start assistant response
-        sb.append("<|im_start|>assistant\n")
         
         return sb.toString()
     }

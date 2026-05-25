@@ -33,93 +33,108 @@ class LocalModelManager(private val context: Context) {
          * 
          * Selection criteria:
          * - Q4_K_M quantization: Best quality/size ratio for mobile
-         * - 1B-3B parameters: Optimal for Pixel 6/7/8 with 8-12GB RAM
+         * - 1B-8B parameters: Optimal for Pixel 6/7/8 with 8-12GB RAM
          * - Instruction-tuned: Better at following prompts
-         * - ChatML format: Standard prompt format support
+         * - ChatML or Gemma format: Standard prompt format support
          */
         val AVAILABLE_MODELS = listOf(
-            // Qwen2.5 - Excellent multilingual support, very efficient
+            // Qwen3 4B - Latest generation with thinking/non-thinking modes
             LocalModelInfo(
-                id = "qwen2.5-1.5b-instruct",
-                name = "Qwen 2.5 1.5B",
-                description = "Fast, multilingual, great for general tasks",
-                sizeBytes = 1_100_000_000L, // ~1.1GB
-                downloadUrl = "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf",
-                filename = "qwen2.5-1.5b-instruct-q4_k_m.gguf",
-                contextSize = 4096,
+                id = "qwen3-4b",
+                name = "Qwen3 4B",
+                description = "Latest Qwen, thinking mode, 32K context",
+                sizeBytes = 2_500_000_000L, // ~2.5GB
+                downloadUrl = "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf",
+                filename = "Qwen3-4B-Q4_K_M.gguf",
+                contextSize = 32768,
                 recommended = true
             ),
-            
-            // SmolLM2 - Ultra-compact, great for low memory devices
+
+            // Qwen3 1.7B - Fastest Qwen3 for low-memory devices
             LocalModelInfo(
-                id = "smollm2-1.7b-instruct",
-                name = "SmolLM2 1.7B",
-                description = "Compact, fast, good for basic tasks",
-                sizeBytes = 1_000_000_000L, // ~1GB
-                downloadUrl = "https://huggingface.co/HuggingFaceTB/SmolLM2-1.7B-Instruct-GGUF/resolve/main/smollm2-1.7b-instruct-q4_k_m.gguf",
-                filename = "smollm2-1.7b-instruct-q4_k_m.gguf",
-                contextSize = 2048,
+                id = "qwen3-1.7b",
+                name = "Qwen3 1.7B",
+                description = "Fast Qwen3, thinking mode, multilingual",
+                sizeBytes = 1_830_000_000L, // ~1.83GB (Q8_0)
+                downloadUrl = "https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q8_0.gguf",
+                filename = "Qwen3-1.7B-Q8_0.gguf",
+                contextSize = 32768,
                 recommended = false
             ),
-            
-            // Phi-3 Mini - Microsoft's efficient model
+
+            // Gemma 4 E2B - Google's latest, optimized for phones
             LocalModelInfo(
-                id = "phi-3-mini-4k-instruct",
-                name = "Phi-3 Mini",
-                description = "Microsoft's efficient model, great reasoning",
-                sizeBytes = 2_300_000_000L, // ~2.3GB
-                downloadUrl = "https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf",
-                filename = "phi-3-mini-4k-instruct-q4.gguf",
-                contextSize = 4096,
+                id = "gemma-4-e2b",
+                name = "Gemma 4 E2B",
+                description = "Google's latest, thinking mode, 128K context",
+                sizeBytes = 3_110_000_000L, // ~3.11GB
+                downloadUrl = "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf",
+                filename = "gemma-4-E2B-it-Q4_K_M.gguf",
+                contextSize = 8192,
+                recommended = true,
+                promptFormat = "gemma"
+            ),
+
+            // Gemma 4 E4B - Larger variant for laptops/tablets
+            LocalModelInfo(
+                id = "gemma-4-e4b",
+                name = "Gemma 4 E4B",
+                description = "Google's larger model, thinking mode, 128K context",
+                sizeBytes = 4_980_000_000L, // ~4.98GB
+                downloadUrl = "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf",
+                filename = "gemma-4-E4B-it-Q4_K_M.gguf",
+                contextSize = 8192,
+                recommended = false,
+                promptFormat = "gemma"
+            ),
+
+            // DeepSeek-R1-Distill-Qwen-1.5B - Reasoning distilled from R1
+            LocalModelInfo(
+                id = "deepseek-r1-distill-qwen-1.5b",
+                name = "DeepSeek R1 1.5B",
+                description = "R1-distilled reasoning, fast inference",
+                sizeBytes = 1_120_000_000L, // ~1.12GB
+                downloadUrl = "https://huggingface.co/bartowski/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf",
+                filename = "deepseek-r1-distill-qwen-1.5b-q4_k_m.gguf",
+                contextSize = 8192,
                 recommended = true
             ),
-            
-            // Gemma 2 2B - Google's open model
+
+            // SmolLM3 3B - Latest generation, multilingual, 128K context
             LocalModelInfo(
-                id = "gemma-2-2b-it",
-                name = "Gemma 2 2B",
-                description = "Google's efficient model, good quality",
-                sizeBytes = 1_600_000_000L, // ~1.6GB
-                downloadUrl = "https://huggingface.co/google/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-q4_k_m.gguf",
-                filename = "gemma-2-2b-it-q4_k_m.gguf",
-                contextSize = 4096,
-                recommended = false
-            ),
-            
-            // Llama 3.2 1B - Meta's smallest Llama
-            LocalModelInfo(
-                id = "llama-3.2-1b-instruct",
-                name = "Llama 3.2 1B",
-                description = "Meta's compact model, fast inference",
-                sizeBytes = 750_000_000L, // ~750MB
-                downloadUrl = "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf",
-                filename = "llama-3.2-1b-instruct-q4_k_m.gguf",
-                contextSize = 4096,
-                recommended = false
-            ),
-            
-            // Llama 3.2 3B - Better quality, more memory
-            LocalModelInfo(
-                id = "llama-3.2-3b-instruct",
-                name = "Llama 3.2 3B",
-                description = "Meta's balanced model, best quality",
-                sizeBytes = 2_000_000_000L, // ~2GB
-                downloadUrl = "https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf",
-                filename = "llama-3.2-3b-instruct-q4_k_m.gguf",
-                contextSize = 4096,
+                id = "smollm3-3b",
+                name = "SmolLM3 3B",
+                description = "Latest SmolLM, multilingual, 128K context",
+                sizeBytes = 1_920_000_000L, // ~1.92GB
+                downloadUrl = "https://huggingface.co/ggml-org/SmolLM3-3B-GGUF/resolve/main/SmolLM3-Q4_K_M.gguf",
+                filename = "smollm3-3b-q4_k_m.gguf",
+                contextSize = 8192,
                 recommended = true
             ),
-            
-            // TinyLlama - Ultra small for testing
+
+            // Phi-4-mini - Microsoft's latest efficient model, 128K context
             LocalModelInfo(
-                id = "tinyllama-1.1b-chat",
-                name = "TinyLlama 1.1B",
-                description = "Very fast, lowest memory usage",
-                sizeBytes = 670_000_000L, // ~670MB
-                downloadUrl = "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
-                filename = "tinyllama-1.1b-chat-v1.0-q4_k_m.gguf",
-                contextSize = 2048,
-                recommended = false
+                id = "phi-4-mini-instruct",
+                name = "Phi-4 Mini 3.8B",
+                description = "Microsoft's latest, excellent reasoning, 128K",
+                sizeBytes = 2_490_000_000L, // ~2.49GB
+                downloadUrl = "https://huggingface.co/bartowski/microsoft_Phi-4-mini-instruct-GGUF/resolve/main/microsoft_Phi-4-mini-instruct-Q4_K_M.gguf",
+                filename = "phi-4-mini-instruct-q4_k_m.gguf",
+                contextSize = 8192,
+                recommended = true
+            ),
+
+            // Gemma 3 4B IT - Google's latest, multilingual, vision-capable
+            LocalModelInfo(
+                id = "gemma-3-4b-it",
+                name = "Gemma 3 4B",
+                description = "Google's latest, multilingual, 128K context",
+                sizeBytes = 2_490_000_000L, // ~2.49GB
+                downloadUrl = "https://huggingface.co/bartowski/google_gemma-3-4b-it-GGUF/resolve/main/google_gemma-3-4b-it-Q4_K_M.gguf",
+                filename = "google_gemma-3-4b-it-q4_k_m.gguf",
+                contextSize = 8192,
+                recommended = false,
+                promptFormat = "gemma"
             )
         )
     }
@@ -306,7 +321,8 @@ data class LocalModelInfo(
     val downloadUrl: String,
     val filename: String,
     val contextSize: Int,
-    val recommended: Boolean = false
+    val recommended: Boolean = false,
+    val promptFormat: String = "chatml"
 ) {
     /**
      * Format size as human-readable string

@@ -35,7 +35,6 @@
     <domain-config cleartextTrafficPermitted="false">
         <domain includeSubdomains="true">github.com</domain>
         <domain includeSubdomains="true">api.github.com</domain>
-        <domain includeSubdomains="true">api.githubcopilot.com</domain>
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>
