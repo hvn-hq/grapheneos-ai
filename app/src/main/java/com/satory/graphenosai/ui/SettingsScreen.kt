@@ -4,11 +4,15 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -19,12 +23,15 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -36,6 +43,7 @@ import com.satory.graphenosai.service.AssistantService
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
+@Suppress("DEPRECATION")
 @Composable
 fun SettingsScreen(
     onNavigateBack: () -> Unit,
@@ -47,7 +55,7 @@ fun SettingsScreen(
     val settingsManager = remember { SettingsManager(context) }
     val voskTranscriber = remember { VoskTranscriber(context) }
     val scope = rememberCoroutineScope()
-    
+
     var selectedModel by remember { mutableStateOf(settingsManager.selectedModel) }
     var customModelId by remember { mutableStateOf(settingsManager.customModelId) }
     var systemPrompt by remember { mutableStateOf(settingsManager.systemPrompt) }
@@ -58,7 +66,7 @@ fun SettingsScreen(
     var apiProvider by remember { mutableStateOf(settingsManager.apiProvider) }
     var multilingualEnabled by remember { mutableStateOf(settingsManager.multilingualEnabled) }
     var secondaryLanguage by remember { mutableStateOf(settingsManager.secondaryVoiceLanguage) }
-    
+
     var showModelDialog by remember { mutableStateOf(false) }
     var showCustomModelDialog by remember { mutableStateOf(false) }
     var showLocalModelDialog by remember { mutableStateOf(false) }
@@ -66,53 +74,92 @@ fun SettingsScreen(
     var showApiKeyDialog by remember { mutableStateOf(false) }
     var showBraveKeyDialog by remember { mutableStateOf(false) }
     var showExaKeyDialog by remember { mutableStateOf(false) }
+    var showLangSearchKeyDialog by remember { mutableStateOf(false) }
     var showSearchEngineDialog by remember { mutableStateOf(false) }
     var showLanguageDialog by remember { mutableStateOf(false) }
     var showSecondaryLanguageDialog by remember { mutableStateOf(false) }
     var hasApiKey by remember { mutableStateOf(app.secureKeyManager.hasOpenRouterApiKey()) }
     var hasBraveApiKey by remember { mutableStateOf(app.secureKeyManager.hasBraveApiKey()) }
     var hasExaApiKey by remember { mutableStateOf(app.secureKeyManager.hasExaApiKey()) }
+    var hasLangSearchApiKey by remember { mutableStateOf(app.secureKeyManager.hasLangSearchApiKey()) }
     var searchEngine by remember { mutableStateOf(settingsManager.searchEngine) }
-    
-    // Voice language state
+
     var selectedLanguage by remember { mutableStateOf(settingsManager.voiceLanguage) }
     var downloadedLanguages by remember { mutableStateOf(voskTranscriber.getDownloadedLanguages()) }
-    
-    // Vosk model state  
+
     var isVoskModelDownloaded by remember { mutableStateOf(!voskTranscriber.needsModelDownload(selectedLanguage)) }
     var isDownloading by remember { mutableStateOf(false) }
     var isExtracting by remember { mutableStateOf(false) }
     var downloadProgress by remember { mutableStateOf(0) }
     var downloadError by remember { mutableStateOf<String?>(null) }
 
-    Scaffold(
-        topBar = {
+    val providerLabel = when (apiProvider) {
+        SettingsManager.PROVIDER_LOCAL -> "Local AI"
+        else -> "OpenRouter"
+    }
+    val selectedModelLabel = if (apiProvider == SettingsManager.PROVIDER_LOCAL) {
+        LocalModelManager.AVAILABLE_MODELS
+            .find { it.id == settingsManager.localModelId }?.name ?: "Select local model"
+    } else {
+        if (customModelId.isNotBlank()) customModelId
+        else SettingsManager.AVAILABLE_MODELS.find { it.id == selectedModel }?.name ?: selectedModel
+    }
+    val voiceLabel = when (voiceInputMethod) {
+        SettingsManager.VOICE_INPUT_VOSK -> "Vosk offline"
+        SettingsManager.VOICE_INPUT_WHISPER -> "Whisper cloud"
+        else -> "Android system"
+    }
+    val searchLabel = when (searchEngine) {
+        SettingsManager.SEARCH_BRAVE -> "Brave"
+        SettingsManager.SEARCH_EXA -> "Exa"
+        SettingsManager.SEARCH_LANGSEARCH -> "LangSearch"
+        else -> "Brave"
+    }
+    val keyStatus = when (apiProvider) {
+        SettingsManager.PROVIDER_LOCAL -> "Offline"
+        else -> if (hasApiKey) "API key saved" else "API key needed"
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
             TopAppBar(
                 title = { Text("Settings") },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.AutoMirrored.Default.ArrowBack, contentDescription = "Back")
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                    scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer
+                )
             )
-        }
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-        ) {
-            // API Section
+
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(bottom = 20.dp)
+            ) {
+                SettingsOverviewCard(
+                    provider = providerLabel,
+                    model = selectedModelLabel,
+                    voice = voiceLabel,
+                    search = if (apiProvider == SettingsManager.PROVIDER_LOCAL) null else searchLabel,
+                    keyStatus = keyStatus
+                )
+
             SettingsSection(title = "API Configuration") {
-                // Provider Selection - now with 3 options
                 var showProviderDialog by remember { mutableStateOf(false) }
-                
+
                 val providerName = when (apiProvider) {
                     SettingsManager.PROVIDER_LOCAL -> "Local AI (Offline)"
                     else -> "OpenRouter"
                 }
-                
+
                 SettingsItem(
                     icon = when (apiProvider) {
                         SettingsManager.PROVIDER_LOCAL -> Icons.Default.OfflineBolt
@@ -122,12 +169,11 @@ fun SettingsScreen(
                     subtitle = providerName,
                     onClick = { showProviderDialog = true }
                 )
-                
-                // Provider selection dialog
+
                 if (showProviderDialog) {
                     AlertDialog(
                         onDismissRequest = { showProviderDialog = false },
-                        title = { Text("Select AI Provider") },
+                        title = { Text("Select AI Provider", style = MaterialTheme.typography.headlineSmall) },
                         text = {
                             Column {
                                 listOf(
@@ -135,8 +181,7 @@ fun SettingsScreen(
                                     Triple(SettingsManager.PROVIDER_LOCAL, "Local AI (Offline)", "Runs on device, no internet needed")
                                 ).forEach { (provider, name, description) ->
                                     Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
+                                        modifier = Modifier.fillMaxWidth()
                                             .clickable {
                                                 apiProvider = provider
                                                 settingsManager.apiProvider = provider
@@ -157,26 +202,21 @@ fun SettingsScreen(
                                         )
                                         Spacer(modifier = Modifier.width(12.dp))
                                         Column {
-                                            Text(name, fontWeight = FontWeight.Medium)
-                                            Text(
-                                                description,
+                                            Text(name, style = MaterialTheme.typography.bodyLarge)
+                                            Text(description,
                                                 style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     }
                                 }
                             }
                         },
                         confirmButton = {
-                            TextButton(onClick = { showProviderDialog = false }) {
-                                Text("Cancel")
-                            }
+                            TextButton(onClick = { showProviderDialog = false }) { Text("Cancel") }
                         }
                     )
                 }
-                
-                // OpenRouter API Key
+
                 if (apiProvider == SettingsManager.PROVIDER_OPENROUTER) {
                     SettingsItem(
                         icon = Icons.Default.Key,
@@ -185,105 +225,111 @@ fun SettingsScreen(
                         onClick = { showApiKeyDialog = true }
                     )
                 }
-                
             }
-            
-            // Local AI Models Section (only shown when Local provider selected)
+
             if (apiProvider == SettingsManager.PROVIDER_LOCAL) {
                 LocalModelsSection(
                     assistantService = assistantService,
                     settingsManager = settingsManager
                 )
             }
-            
-            // Web Search Section - hidden for Local AI (offline)
+
             if (apiProvider != SettingsManager.PROVIDER_LOCAL) {
-            SettingsSection(title = "Web Search") {
-                // Search engine selector
-                val searchEngineName = when (searchEngine) {
-                    SettingsManager.SEARCH_BRAVE -> "Brave Search"
-                    SettingsManager.SEARCH_EXA -> "Exa AI"
-                    else -> "Brave Search"
-                }
-                SettingsItem(
-                    icon = Icons.Default.Search,
-                    title = "Search Engine",
-                    subtitle = searchEngineName,
-                    onClick = { showSearchEngineDialog = true }
-                )
-                
-                // Show API key field based on selected search engine
-                if (searchEngine == SettingsManager.SEARCH_BRAVE) {
+                SettingsSection(title = "Web Search") {
+                    val searchEngineName = when (searchEngine) {
+                        SettingsManager.SEARCH_BRAVE -> "Brave Search"
+                        SettingsManager.SEARCH_EXA -> "Exa AI"
+                        SettingsManager.SEARCH_LANGSEARCH -> "LangSearch"
+                        else -> "Brave Search"
+                    }
                     SettingsItem(
-                        icon = Icons.Default.Key,
-                        title = "Brave Search API Key",
-                        subtitle = if (hasBraveApiKey) "Configured ✓" else "Required • Free at brave.com/search/api",
-                        onClick = { showBraveKeyDialog = true }
+                        icon = Icons.Default.Search,
+                        title = "Search Engine",
+                        subtitle = searchEngineName,
+                        onClick = { showSearchEngineDialog = true }
                     )
-                } else {
-                    SettingsItem(
-                        icon = Icons.Default.Key,
-                        title = "Exa AI API Key",
-                        subtitle = if (hasExaApiKey) "Configured ✓" else "Required • Get at dashboard.exa.ai",
-                        onClick = { showExaKeyDialog = true }
+
+                    when (searchEngine) {
+                        SettingsManager.SEARCH_BRAVE -> {
+                            SettingsItem(
+                                icon = Icons.Default.Key,
+                                title = "Brave Search API Key",
+                                subtitle = if (hasBraveApiKey) "Configured ✓" else "Required • Free at brave.com/search/api",
+                                onClick = { showBraveKeyDialog = true }
+                            )
+                        }
+                        SettingsManager.SEARCH_EXA -> {
+                            SettingsItem(
+                                icon = Icons.Default.Key,
+                                title = "Exa AI API Key",
+                                subtitle = if (hasExaApiKey) "Configured ✓" else "Required • Get at dashboard.exa.ai",
+                                onClick = { showExaKeyDialog = true }
+                            )
+                        }
+                        SettingsManager.SEARCH_LANGSEARCH -> {
+                            SettingsItem(
+                                icon = Icons.Default.Key,
+                                title = "LangSearch API Key",
+                                subtitle = if (hasLangSearchApiKey) "Configured ✓" else "Required • Free at langsearch.com",
+                                onClick = { showLangSearchKeyDialog = true }
+                            )
+                        }
+                    }
+
+                    val searchDescription = when (searchEngine) {
+                        SettingsManager.SEARCH_BRAVE -> "Brave Search: Privacy-focused, 2000 free queries/month"
+                        SettingsManager.SEARCH_EXA -> "Exa AI: Semantic search with AI-powered results"
+                        SettingsManager.SEARCH_LANGSEARCH -> "LangSearch: Free web search API for LLM applications"
+                        else -> ""
+                    }
+                    Text(
+                        searchDescription,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                     )
                 }
-                
-                Text(
-                    text = if (searchEngine == SettingsManager.SEARCH_BRAVE)
-                        "Brave Search: Privacy-focused, 2000 free queries/month"
-                    else
-                        "Exa AI: Semantic search with AI-powered results",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                )
             }
-            } // End of Web Search conditional
-            
-            // Model Section - different for local vs cloud providers
+
             if (apiProvider != SettingsManager.PROVIDER_LOCAL) {
-            SettingsSection(title = "AI Model") {
-                val modelName = SettingsManager.AVAILABLE_MODELS
-                    .find { it.id == selectedModel }?.name ?: selectedModel
-                SettingsItem(
-                    icon = Icons.Default.SmartToy,
-                    title = "Model",
-                    subtitle = if (customModelId.isNotBlank()) "Custom: $customModelId" else modelName,
-                    onClick = { showModelDialog = true }
-                )
-                
-                // Custom model ID input
-                SettingsItem(
-                    icon = Icons.Default.Edit,
-                    title = "Custom Model ID",
-                    subtitle = if (customModelId.isNotBlank()) customModelId else "Not set (use list selection)",
-                    onClick = { showCustomModelDialog = true }
-                )
-                
-                SettingsItem(
-                    icon = Icons.Default.Description,
-                    title = "System Prompt",
-                    subtitle = systemPrompt.take(50) + if (systemPrompt.length > 50) "..." else "",
-                    onClick = { showPromptDialog = true }
-                )
+                SettingsSection(title = "AI Model") {
+                    val modelName = SettingsManager.AVAILABLE_MODELS
+                        .find { it.id == selectedModel }?.name ?: selectedModel
+                    SettingsItem(
+                        icon = Icons.Default.SmartToy,
+                        title = "Model",
+                        subtitle = if (customModelId.isNotBlank()) "Custom: $customModelId" else modelName,
+                        onClick = { showModelDialog = true }
+                    )
+
+                    SettingsItem(
+                        icon = Icons.Default.Edit,
+                        title = "Custom Model ID",
+                        subtitle = if (customModelId.isNotBlank()) customModelId else "Not set (use list selection)",
+                        onClick = { showCustomModelDialog = true }
+                    )
+
+                    SettingsItem(
+                        icon = Icons.Default.Description,
+                        title = "System Prompt",
+                        subtitle = systemPrompt.take(50) + if (systemPrompt.length > 50) "..." else "",
+                        onClick = { showPromptDialog = true }
+                    )
+                }
             }
-            } // End of Model Section conditional
-            
-            // Local Model Selection (shown when using offline AI)
+
             if (apiProvider == SettingsManager.PROVIDER_LOCAL) {
                 SettingsSection(title = "Downloaded Models") {
                     SettingsItem(
                         icon = Icons.Default.SmartToy,
                         title = "Local Model",
-                        subtitle = com.satory.graphenosai.llm.LocalModelManager.AVAILABLE_MODELS
+                        subtitle = LocalModelManager.AVAILABLE_MODELS
                             .find { it.id == settingsManager.localModelId }?.name ?: "Select a model",
                         onClick = { showLocalModelDialog = true }
                     )
                 }
             }
-            
-            // System Prompt for Local AI (shown separately since model section is hidden)
+
             if (apiProvider == SettingsManager.PROVIDER_LOCAL) {
                 SettingsSection(title = "AI Configuration") {
                     SettingsItem(
@@ -292,25 +338,36 @@ fun SettingsScreen(
                         subtitle = systemPrompt.take(50) + if (systemPrompt.length > 50) "..." else "",
                         onClick = { showPromptDialog = true }
                     )
-                    
-                    Text(
-                        text = "⚡ Local AI works completely offline. No data is sent to the internet.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                    )
+
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.OfflineBolt, contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                "Local AI works completely offline. No data is sent to the internet.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
                 }
             }
-            
-            // Voice Section
+
             SettingsSection(title = "Voice Input") {
                 var showVoiceMethodDialog by remember { mutableStateOf(false) }
                 var whisperProvider by remember { mutableStateOf(settingsManager.whisperProvider) }
                 var showWhisperProviderDialog by remember { mutableStateOf(false) }
                 var hasGroqKey by remember { mutableStateOf(app.secureKeyManager.hasGroqApiKey()) }
                 var showGroqKeyDialog by remember { mutableStateOf(false) }
-                
-                // Voice method selector
+
                 val voiceMethodName = when (voiceInputMethod) {
                     SettingsManager.VOICE_INPUT_VOSK -> "Vosk (Offline)"
                     SettingsManager.VOICE_INPUT_WHISPER -> "Whisper (Cloud)"
@@ -322,8 +379,7 @@ fun SettingsScreen(
                     subtitle = voiceMethodName,
                     onClick = { showVoiceMethodDialog = true }
                 )
-                
-                // Whisper provider settings
+
                 if (voiceInputMethod == SettingsManager.VOICE_INPUT_WHISPER) {
                     val providerName = when (whisperProvider) {
                         SettingsManager.WHISPER_OPENAI -> "OpenAI (requires API key)"
@@ -335,8 +391,7 @@ fun SettingsScreen(
                         subtitle = providerName,
                         onClick = { showWhisperProviderDialog = true }
                     )
-                    
-                    // Groq API key (only shown for Groq provider)
+
                     if (whisperProvider == SettingsManager.WHISPER_GROQ) {
                         SettingsItem(
                             icon = Icons.Default.Key,
@@ -346,12 +401,11 @@ fun SettingsScreen(
                         )
                     }
                 }
-                
-                // Voice method dialog
+
                 if (showVoiceMethodDialog) {
                     AlertDialog(
                         onDismissRequest = { showVoiceMethodDialog = false },
-                        title = { Text("Voice Recognition Method") },
+                        title = { Text("Voice Recognition Method", style = MaterialTheme.typography.headlineSmall) },
                         text = {
                             Column {
                                 listOf(
@@ -360,8 +414,7 @@ fun SettingsScreen(
                                     Triple(SettingsManager.VOICE_INPUT_WHISPER, "Whisper (Cloud)", "Best accuracy, requires internet")
                                 ).forEach { (method, name, description) ->
                                     Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
+                                        modifier = Modifier.fillMaxWidth()
                                             .clickable {
                                                 voiceInputMethod = method
                                                 settingsManager.voiceInputMethod = method
@@ -380,30 +433,25 @@ fun SettingsScreen(
                                         )
                                         Spacer(modifier = Modifier.width(12.dp))
                                         Column {
-                                            Text(name, fontWeight = FontWeight.Medium)
-                                            Text(
-                                                description,
+                                            Text(name, style = MaterialTheme.typography.bodyLarge)
+                                            Text(description,
                                                 style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     }
                                 }
                             }
                         },
                         confirmButton = {
-                            TextButton(onClick = { showVoiceMethodDialog = false }) {
-                                Text("Cancel")
-                            }
+                            TextButton(onClick = { showVoiceMethodDialog = false }) { Text("Cancel") }
                         }
                     )
                 }
-                
-                // Whisper provider dialog
+
                 if (showWhisperProviderDialog) {
                     AlertDialog(
                         onDismissRequest = { showWhisperProviderDialog = false },
-                        title = { Text("Whisper Provider") },
+                        title = { Text("Whisper Provider", style = MaterialTheme.typography.headlineSmall) },
                         text = {
                             Column {
                                 listOf(
@@ -411,8 +459,7 @@ fun SettingsScreen(
                                     Triple(SettingsManager.WHISPER_OPENAI, "OpenAI", "Original, uses OpenRouter key")
                                 ).forEach { (provider, name, description) ->
                                     Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
+                                        modifier = Modifier.fillMaxWidth()
                                             .clickable {
                                                 whisperProvider = provider
                                                 settingsManager.whisperProvider = provider
@@ -431,40 +478,33 @@ fun SettingsScreen(
                                         )
                                         Spacer(modifier = Modifier.width(12.dp))
                                         Column {
-                                            Text(name, fontWeight = FontWeight.Medium)
-                                            Text(
-                                                description,
+                                            Text(name, style = MaterialTheme.typography.bodyLarge)
+                                            Text(description,
                                                 style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     }
                                 }
                             }
                         },
                         confirmButton = {
-                            TextButton(onClick = { showWhisperProviderDialog = false }) {
-                                Text("Cancel")
-                            }
+                            TextButton(onClick = { showWhisperProviderDialog = false }) { Text("Cancel") }
                         }
                     )
                 }
-                
-                // Groq API key dialog
+
                 if (showGroqKeyDialog) {
                     var groqKey by remember { mutableStateOf("") }
                     var showKey by remember { mutableStateOf(false) }
-                    
+
                     AlertDialog(
                         onDismissRequest = { showGroqKeyDialog = false },
                         title = { Text("Groq API Key") },
                         text = {
                             Column {
-                                Text(
-                                    "Get a free API key at console.groq.com",
+                                Text("Get a free API key at console.groq.com",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Spacer(modifier = Modifier.height(16.dp))
                                 OutlinedTextField(
                                     value = groqKey,
@@ -474,42 +514,32 @@ fun SettingsScreen(
                                     visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
                                     trailingIcon = {
                                         IconButton(onClick = { showKey = !showKey }) {
-                                            Icon(
-                                                if (showKey) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                                "Toggle visibility"
-                                            )
+                                            Icon(if (showKey) Icons.Default.VisibilityOff else Icons.Default.Visibility, "Toggle")
                                         }
                                     }
                                 )
                             }
                         },
                         confirmButton = {
-                            TextButton(
-                                onClick = {
-                                    if (groqKey.isNotBlank()) {
-                                        app.secureKeyManager.setGroqApiKey(groqKey)
-                                        hasGroqKey = true
-                                    }
-                                    showGroqKeyDialog = false
+                            TextButton(onClick = {
+                                if (groqKey.isNotBlank()) {
+                                    app.secureKeyManager.setGroqApiKey(groqKey)
+                                    hasGroqKey = true
                                 }
-                            ) {
-                                Text("Save")
-                            }
+                                showGroqKeyDialog = false
+                            }) { Text("Save") }
                         },
                         dismissButton = {
-                            TextButton(onClick = { showGroqKeyDialog = false }) {
-                                Text("Cancel")
-                            }
+                            TextButton(onClick = { showGroqKeyDialog = false }) { Text("Cancel") }
                         }
                     )
                 }
-                
-                // Always show language management (for any voice method)
+
                 SettingsItem(
                     icon = Icons.Default.Language,
                     title = "Voice Languages",
                     subtitle = "${downloadedLanguages.size} downloaded • Manage Vosk models",
-                    onClick = { 
+                    onClick = {
                         if (onNavigateToLanguages != null) {
                             onNavigateToLanguages()
                         } else {
@@ -517,138 +547,101 @@ fun SettingsScreen(
                         }
                     }
                 )
-                
-                // Language selection for Vosk
+
                 if (voiceInputMethod == SettingsManager.VOICE_INPUT_VOSK) {
                     val currentLang = VoskTranscriber.getLanguageByCode(selectedLanguage)
                     val isLangDownloaded = downloadedLanguages.contains(selectedLanguage)
                     SettingsItem(
                         icon = Icons.Default.Language,
                         title = "Recognition Language",
-                        subtitle = "${currentLang.displayName}" + 
-                            if (isLangDownloaded) " ✓" else " (download required)",
+                        subtitle = "${currentLang.displayName}" + if (isLangDownloaded) " ✓" else " (download required)",
                         onClick = { showLanguageDialog = true }
                     )
-                
-                // Vosk Model Download Card
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = if (isLangDownloaded) 
-                                MaterialTheme.colorScheme.secondaryContainer
-                            else MaterialTheme.colorScheme.surfaceVariant
-                        )
+
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        tonalElevation = 1.dp,
+                        color = if (isLangDownloaded) MaterialTheme.colorScheme.secondaryContainer
+                        else MaterialTheme.colorScheme.surfaceVariant
                     ) {
-                        Column(
-                            modifier = Modifier.padding(16.dp)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
-                                    imageVector = if (isLangDownloaded) Icons.Default.CheckCircle 
-                                                  else Icons.Default.Download,
+                                    imageVector = if (isLangDownloaded) Icons.Default.CheckCircle else Icons.Default.Download,
                                     contentDescription = null,
-                                    tint = if (isLangDownloaded) 
-                                        MaterialTheme.colorScheme.primary
-                                    else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                    tint = if (isLangDownloaded) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurfaceVariant)
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Column(modifier = Modifier.weight(1f)) {
+                                    Text("${currentLang.displayName} Model",
+                                        style = MaterialTheme.typography.bodyLarge)
                                     Text(
-                                        text = "${currentLang.displayName} Model",
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                    Text(
-                                        text = if (isLangDownloaded) "Downloaded ✓ (~${currentLang.sizeBytes / 1_000_000}MB)"
-                                               else "Required for offline voice (~${currentLang.sizeBytes / 1_000_000}MB)",
+                                        if (isLangDownloaded) "Downloaded ✓ (~${currentLang.sizeBytes / 1_000_000}MB)"
+                                        else "Required for offline voice (~${currentLang.sizeBytes / 1_000_000}MB)",
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
-                                
+
                                 if (!isLangDownloaded && !isDownloading && !isExtracting) {
-                                    Button(
-                                        onClick = {
-                                            isDownloading = true
-                                            isExtracting = false
-                                            downloadError = null
-                                            scope.launch {
-                                                voskTranscriber.downloadModel(selectedLanguage).collect { state ->
-                                                    when (state) {
-                                                        is VoskTranscriber.DownloadState.Downloading -> {
-                                                            isDownloading = true
-                                                            isExtracting = false
-                                                            downloadProgress = state.progress
-                                                        }
-                                                        is VoskTranscriber.DownloadState.Extracting -> {
-                                                            isDownloading = false
-                                                            isExtracting = true
-                                                            downloadProgress = state.progress
-                                                        }
-                                                        is VoskTranscriber.DownloadState.Complete -> {
-                                                            isDownloading = false
-                                                            isExtracting = false
-                                                            isVoskModelDownloaded = true
-                                                            downloadedLanguages = voskTranscriber.getDownloadedLanguages()
-                                                            // Reload service settings to initialize Vosk in AssistantService
-                                                            assistantService?.reloadSettings()
-                                                        }
-                                                        is VoskTranscriber.DownloadState.Error -> {
-                                                            isDownloading = false
-                                                            isExtracting = false
-                                                            downloadError = state.message
-                                                        }
-                                                        else -> {}
+                                    FilledTonalButton(onClick = {
+                                        isDownloading = true
+                                        isExtracting = false
+                                        downloadError = null
+                                        scope.launch {
+                                            voskTranscriber.downloadModel(selectedLanguage).collect { state ->
+                                                when (state) {
+                                                    is VoskTranscriber.DownloadState.Downloading -> {
+                                                        isDownloading = true; isExtracting = false
+                                                        downloadProgress = state.progress
                                                     }
+                                                    is VoskTranscriber.DownloadState.Extracting -> {
+                                                        isDownloading = false; isExtracting = true
+                                                        downloadProgress = state.progress
+                                                    }
+                                                    is VoskTranscriber.DownloadState.Complete -> {
+                                                        isDownloading = false; isExtracting = false
+                                                        isVoskModelDownloaded = true
+                                                        downloadedLanguages = voskTranscriber.getDownloadedLanguages()
+                                                        assistantService?.reloadSettings()
+                                                    }
+                                                    is VoskTranscriber.DownloadState.Error -> {
+                                                        isDownloading = false; isExtracting = false
+                                                        downloadError = state.message
+                                                    }
+                                                    else -> {}
                                                 }
                                             }
                                         }
-                                    ) {
-                                        Text("Download")
-                                    }
+                                    }) { Text("Download") }
                                 }
                             }
-                            
+
                             if (isDownloading || isExtracting) {
                                 Spacer(modifier = Modifier.height(12.dp))
-                                LinearProgressIndicator(
-                                    progress = { downloadProgress / 100f },
-                                    modifier = Modifier.fillMaxWidth()
-                                )
+                                LinearProgressIndicator(progress = { downloadProgress / 100f },
+                                    modifier = Modifier.fillMaxWidth())
                                 Text(
-                                    text = if (isExtracting) 
-                                        "Extracting... $downloadProgress%" 
-                                    else 
-                                        "Downloading... $downloadProgress%",
+                                    if (isExtracting) "Extracting... $downloadProgress%"
+                                    else "Downloading... $downloadProgress%",
                                     style = MaterialTheme.typography.bodySmall,
-                                    modifier = Modifier.padding(top = 4.dp)
-                                )
+                                    modifier = Modifier.padding(top = 4.dp))
                                 if (isExtracting) {
-                                    Text(
-                                        text = "This may take a while for large models...",
+                                    Text("This may take a while for large models...",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.padding(top = 2.dp)
-                                    )
+                                        modifier = Modifier.padding(top = 2.dp))
                                 }
                             }
-                            
+
                             downloadError?.let { error ->
                                 Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    text = error,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.error
-                                )
+                                Text(error, style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error)
                             }
                         }
                     }
-                    
-                    // Multilingual mode toggle
+
                     SettingsItemWithSwitch(
                         icon = Icons.Default.Translate,
                         title = "Multilingual Mode",
@@ -660,21 +653,19 @@ fun SettingsScreen(
                             assistantService?.reloadSettings()
                         }
                     )
-                    
-                    // Secondary language selection
+
                     if (multilingualEnabled) {
                         val secondaryLang = VoskTranscriber.getLanguageByCode(secondaryLanguage)
                         val isSecondaryDownloaded = downloadedLanguages.contains(secondaryLanguage)
                         SettingsItem(
                             icon = Icons.Default.Language,
                             title = "Secondary Language",
-                            subtitle = "${secondaryLang.displayName}" + 
-                                if (isSecondaryDownloaded) " ✓" else " (download required)",
+                            subtitle = "${secondaryLang.displayName}" + if (isSecondaryDownloaded) " ✓" else " (download required)",
                             onClick = { showSecondaryLanguageDialog = true }
                         )
                     }
-                } // end if voiceInputMethod == VOSK
-                
+                }
+
                 SettingsItemWithSwitch(
                     icon = Icons.AutoMirrored.Default.Send,
                     title = "Auto-send after speech",
@@ -685,7 +676,7 @@ fun SettingsScreen(
                         settingsManager.autoSendVoice = it
                     }
                 )
-                
+
                 SettingsItemWithSwitch(
                     icon = Icons.Default.Mic,
                     title = "Auto-start voice input",
@@ -697,15 +688,12 @@ fun SettingsScreen(
                     }
                 )
             }
-            
-            // Output Section
+
             SettingsSection(title = "Output") {
-                val ttsAvailable = remember { 
-                    com.satory.graphenosai.tts.TTSManager.isTTSAvailable(context) 
-                }
-                
+                val ttsAvailable = remember { com.satory.graphenosai.tts.TTSManager.isTTSAvailable(context) }
+
                 SettingsItemWithSwitch(
-                    icon = Icons.Default.VolumeUp,
+                    icon = Icons.Filled.VolumeUp,
                     title = "Text-to-Speech",
                     subtitle = if (ttsAvailable) "Read responses aloud" else "Not available on this device",
                     checked = ttsEnabled && ttsAvailable,
@@ -717,18 +705,17 @@ fun SettingsScreen(
                     },
                     enabled = ttsAvailable
                 )
-                
+
                 if (!ttsAvailable) {
                     Text(
-                        text = "Text-to-speech is not available on this device. Install a TTS engine from the Play Store to enable this feature.",
+                        "Text-to-speech is not available on this device. Install a TTS engine from the Play Store to enable this feature.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                     )
                 }
             }
-            
-            // Reset Section
+
             SettingsSection(title = "Advanced") {
                 SettingsItem(
                     icon = Icons.Default.Refresh,
@@ -745,16 +732,15 @@ fun SettingsScreen(
                     }
                 )
             }
-            
-            // About Section
+
             SettingsSection(title = "About") {
                 SettingsItem(
                     icon = Icons.Default.Info,
                     title = "AI Assistant for Android",
-                    subtitle = "v1.1.1",
+                    subtitle = "v1.2.0",
                     onClick = {}
                 )
-                
+
                 SettingsItem(
                     icon = Icons.Default.Person,
                     title = "Developer",
@@ -766,7 +752,7 @@ fun SettingsScreen(
                         context.startActivity(intent)
                     }
                 )
-                
+
                 SettingsItem(
                     icon = Icons.Default.Link,
                     title = "Repository",
@@ -778,28 +764,32 @@ fun SettingsScreen(
                         context.startActivity(intent)
                     }
                 )
-                
-                Text(
-                    text = "Privacy-first AI assistant with OpenRouter support. All conversations are processed securely with on-device encryption.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                )
-                
-                Text(
-                    text = "This is an independent project and is not affiliated with, endorsed by, or associated with GrapheneOS.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
-                )
+
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            "Privacy-first AI assistant with OpenRouter support. All conversations are processed securely with on-device encryption.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            "This is an independent project and is not affiliated with, endorsed by, or associated with GrapheneOS.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
+                    }
+                }
             }
-            
-            Spacer(modifier = Modifier.height(32.dp))
+
+                Spacer(modifier = Modifier.height(32.dp))
+            }
         }
     }
-    
-    // Model Selection Dialog
+
     if (showModelDialog) {
         ModelSelectionDialog(
             currentModel = if (customModelId.isNotBlank()) customModelId else selectedModel,
@@ -821,8 +811,7 @@ fun SettingsScreen(
             onDismiss = { showModelDialog = false }
         )
     }
-    
-    // Custom Model Dialog
+
     if (showCustomModelDialog) {
         CustomModelDialog(
             currentCustomModel = customModelId,
@@ -835,8 +824,7 @@ fun SettingsScreen(
             onDismiss = { showCustomModelDialog = false }
         )
     }
-    
-    // Local Model Selection Dialog
+
     if (showLocalModelDialog) {
         LocalModelSelectionDialog(
             currentModel = settingsManager.localModelId,
@@ -848,8 +836,7 @@ fun SettingsScreen(
             onDismiss = { showLocalModelDialog = false }
         )
     }
-    
-    // System Prompt Dialog
+
     if (showPromptDialog) {
         SystemPromptDialog(
             currentPrompt = systemPrompt,
@@ -862,8 +849,7 @@ fun SettingsScreen(
             onDismiss = { showPromptDialog = false }
         )
     }
-    
-    // API Key Dialog
+
     if (showApiKeyDialog) {
         ApiKeyDialog(
             hasExistingKey = hasApiKey,
@@ -875,8 +861,7 @@ fun SettingsScreen(
             onDismiss = { showApiKeyDialog = false }
         )
     }
-    
-    // Brave Search API Key Dialog
+
     if (showBraveKeyDialog) {
         BraveApiKeyDialog(
             hasExistingKey = hasBraveApiKey,
@@ -888,8 +873,7 @@ fun SettingsScreen(
             onDismiss = { showBraveKeyDialog = false }
         )
     }
-    
-    // Exa AI API Key Dialog
+
     if (showExaKeyDialog) {
         ExaApiKeyDialog(
             hasExistingKey = hasExaApiKey,
@@ -901,8 +885,19 @@ fun SettingsScreen(
             onDismiss = { showExaKeyDialog = false }
         )
     }
-    
-    // Search Engine Selection Dialog
+
+    if (showLangSearchKeyDialog) {
+        LangSearchApiKeyDialog(
+            hasExistingKey = hasLangSearchApiKey,
+            onApiKeySaved = { key ->
+                app.secureKeyManager.setLangSearchApiKey(key)
+                hasLangSearchApiKey = true
+                showLangSearchKeyDialog = false
+            },
+            onDismiss = { showLangSearchKeyDialog = false }
+        )
+    }
+
     if (showSearchEngineDialog) {
         SearchEngineDialog(
             currentEngine = searchEngine,
@@ -914,8 +909,7 @@ fun SettingsScreen(
             onDismiss = { showSearchEngineDialog = false }
         )
     }
-    
-    // Language Selection Dialog
+
     if (showLanguageDialog) {
         LanguageSelectionDialog(
             currentLanguage = selectedLanguage,
@@ -930,8 +924,7 @@ fun SettingsScreen(
             onDismiss = { showLanguageDialog = false }
         )
     }
-    
-    // Secondary Language Selection Dialog
+
     if (showSecondaryLanguageDialog) {
         LanguageSelectionDialog(
             currentLanguage = secondaryLanguage,
@@ -948,41 +941,213 @@ fun SettingsScreen(
 }
 
 @Composable
+fun SettingsOverviewCard(
+    provider: String,
+    model: String,
+    voice: String,
+    search: String?,
+    keyStatus: String
+) {
+    ElevatedCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, top = 2.dp, end = 16.dp, bottom = 4.dp),
+        shape = MaterialTheme.shapes.extraLarge,
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 0.dp),
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.12f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Default.Tune,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(14.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Assistant setup",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    Text(
+                        keyStatus,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.78f)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                SettingsStatusChip(
+                    icon = Icons.Default.Cloud,
+                    label = provider,
+                    modifier = Modifier.weight(1f)
+                )
+                SettingsStatusChip(
+                    icon = Icons.Default.RecordVoiceOver,
+                    label = voice,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            SettingsStatusChip(
+                icon = Icons.Default.SmartToy,
+                label = model,
+                modifier = Modifier.fillMaxWidth()
+            )
+            if (search != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                SettingsStatusChip(
+                    icon = Icons.Default.Search,
+                    label = search,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun SettingsStatusChip(
+    icon: ImageVector,
+    label: String,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.defaultMinSize(minHeight = 40.dp),
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.08f)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                label,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
 fun SettingsSection(
     title: String,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp)
+    ) {
         Text(
-            text = title,
-            style = MaterialTheme.typography.titleSmall,
+            title,
+            style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            modifier = Modifier.padding(horizontal = 28.dp, vertical = 8.dp)
         )
-        content()
-        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+        Surface(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            shape = MaterialTheme.shapes.extraLarge,
+            color = MaterialTheme.colorScheme.surfaceContainer,
+            tonalElevation = 0.dp
+        ) {
+            Column(modifier = Modifier.padding(vertical = 6.dp)) {
+                content()
+            }
+        }
     }
 }
 
 @Composable
 fun SettingsItem(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: ImageVector,
     title: String,
     subtitle: String,
     onClick: () -> Unit
 ) {
     ListItem(
-        headlineContent = { Text(title) },
-        supportingContent = { Text(subtitle, style = MaterialTheme.typography.bodySmall) },
-        leadingContent = { Icon(icon, contentDescription = null) },
-        trailingContent = { Icon(Icons.Default.ChevronRight, contentDescription = null) },
-        modifier = Modifier.clickable(onClick = onClick)
+        headlineContent = {
+            Text(
+                title,
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        },
+        supportingContent = {
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        },
+        leadingContent = {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(MaterialTheme.shapes.medium)
+                    .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.72f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        },
+        trailingContent = {
+            Icon(
+                Icons.Default.ChevronRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f)
+            )
+        },
+        colors = ListItemDefaults.colors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainer
+        ),
+        modifier = Modifier
+            .padding(horizontal = 6.dp, vertical = 2.dp)
+            .clip(MaterialTheme.shapes.large)
+            .defaultMinSize(minHeight = 72.dp)
+            .clickable(onClick = onClick)
     )
 }
 
 @Composable
 fun SettingsItemWithSwitch(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: ImageVector,
     title: String,
     subtitle: String,
     checked: Boolean,
@@ -990,36 +1155,61 @@ fun SettingsItemWithSwitch(
     enabled: Boolean = true
 ) {
     ListItem(
-        headlineContent = { 
+        headlineContent = {
             Text(
                 title,
-                color = if (enabled) MaterialTheme.colorScheme.onSurface 
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = if (enabled) MaterialTheme.colorScheme.onSurface
                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-            ) 
+            )
         },
-        supportingContent = { 
+        supportingContent = {
             Text(
-                subtitle, 
+                subtitle,
                 style = MaterialTheme.typography.bodySmall,
-                color = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant 
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                color = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant
                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
-            ) 
+            )
         },
-        leadingContent = { 
-            Icon(
-                icon, 
-                contentDescription = null,
-                tint = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant 
-                      else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
-            ) 
+        leadingContent = {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(MaterialTheme.shapes.medium)
+                    .background(
+                        if (enabled) MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.72f)
+                        else MaterialTheme.colorScheme.surfaceVariant
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    icon,
+                    contentDescription = null,
+                    tint = if (enabled) MaterialTheme.colorScheme.onSecondaryContainer
+                          else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f),
+                    modifier = Modifier.size(20.dp)
+                )
+            }
         },
         trailingContent = {
             Switch(
-                checked = checked, 
-                onCheckedChange = onCheckedChange,
+                checked = checked,
+                onCheckedChange = null,
                 enabled = enabled
             )
-        }
+        },
+        colors = ListItemDefaults.colors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainer
+        ),
+        modifier = Modifier
+            .padding(horizontal = 6.dp, vertical = 2.dp)
+            .clip(MaterialTheme.shapes.large)
+            .defaultMinSize(minHeight = 72.dp)
+            .clickable(enabled = enabled) { onCheckedChange(!checked) }
     )
 }
 
@@ -1034,7 +1224,7 @@ fun ModelSelectionDialog(
     onDismiss: () -> Unit
 ) {
     var showCustomInput by remember { mutableStateOf(false) }
-    
+
     if (showCustomInput) {
         CustomModelDialog(
             currentCustomModel = customModelId,
@@ -1049,98 +1239,77 @@ fun ModelSelectionDialog(
         )
         return
     }
-    
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        Card(
-            modifier = Modifier
-                .fillMaxWidth(0.95f)
-                .fillMaxHeight(0.8f)
+        Surface(
+            modifier = Modifier.fillMaxWidth(0.95f).fillMaxHeight(0.8f),
+            shape = RoundedCornerShape(28.dp),
+            tonalElevation = 6.dp
         ) {
             Column {
                 TopAppBar(
                     title = { Text("Select Model") },
                     navigationIcon = {
                         IconButton(onClick = onDismiss) {
-                            Icon(Icons.Default.Close, contentDescription = "Close")
+                            Icon(Icons.Default.Close, "Close")
                         }
                     }
                 )
-                
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    // Free models section (only for OpenRouter)
+
+                LazyColumn(modifier = Modifier.fillMaxSize()) {
                     val freeModels = models.filter { it.id.contains(":free") }
                     if (freeModels.isNotEmpty()) {
                         item {
-                            Text(
-                                "Free Models",
-                                style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(16.dp)
-                            )
+                                Text(
+                                    "Free Models",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(16.dp, top = 8.dp))
+                            }
+                            items(freeModels) { model ->
+                                ModelItem(model = model, isSelected = model.id == currentModel,
+                                    onClick = { onModelSelected(model.id) })
+                            }
                         }
-                        items(freeModels) { model ->
-                            ModelItem(
-                                model = model,
-                                isSelected = model.id == currentModel,
-                                onClick = { onModelSelected(model.id) }
-                            )
-                        }
-                    }
-                    
-                    // Premium/All models section
-                    val premiumModels = models.filter { !it.id.contains(":free") }
-                    if (premiumModels.isNotEmpty()) {
-                        item {
-                            Text(
-                                if (freeModels.isNotEmpty()) "Premium Models" else "Available Models",
-                                style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(16.dp)
-                            )
+
+                        val premiumModels = models.filter { !it.id.contains(":free") }
+                        if (premiumModels.isNotEmpty()) {
+                            item {
+                                Text(
+                                    if (freeModels.isNotEmpty()) "Premium Models" else "Available Models",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(16.dp, top = 8.dp))
                         }
                         items(premiumModels) { model ->
-                            ModelItem(
-                                model = model,
-                                isSelected = model.id == currentModel,
-                                onClick = { onModelSelected(model.id) }
-                            )
+                            ModelItem(model = model, isSelected = model.id == currentModel,
+                                onClick = { onModelSelected(model.id) })
                         }
                     }
-                    
-                    // Custom model option
+
                     item {
                         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                     }
                     item {
                         ListItem(
                             headlineContent = {
-                                Text(
-                                    "Custom model...",
-                                    fontWeight = FontWeight.Medium,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
+                                Text("Custom model...",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.primary)
                             },
                             supportingContent = {
-                                Text(
-                                    if (customModelId.isNotBlank()) "Current: $customModelId"
-                                    else "Enter any OpenRouter model ID"
-                                )
+                                Text(if (customModelId.isNotBlank()) "Current: $customModelId"
+                                    else "Enter any OpenRouter model ID")
                             },
                             leadingContent = {
                                 RadioButton(
-                                    selected = customModelId.isNotBlank() &&
-                                        currentModel == customModelId,
-                                    onClick = { showCustomInput = true }
-                                )
+                                    selected = customModelId.isNotBlank() && currentModel == customModelId,
+                                    onClick = { showCustomInput = true })
                             },
-                            modifier = Modifier
-                                .clickable { showCustomInput = true }
-                                .padding(vertical = 4.dp)
+                            modifier = Modifier.clickable { showCustomInput = true }.padding(vertical = 4.dp)
                         )
                     }
                 }
@@ -1156,20 +1325,48 @@ fun ModelItem(
     onClick: () -> Unit
 ) {
     ListItem(
-        headlineContent = { 
-            Text(
-                model.name,
-                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-            ) 
+        headlineContent = {
+            Text(model.name, style = MaterialTheme.typography.bodyLarge,
+                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal)
         },
-        supportingContent = { Text(model.description) },
+        supportingContent = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(model.description)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (model.supportsVision) {
+                        AssistChip(
+                            onClick = {},
+                            enabled = false,
+                            label = { Text("Vision") },
+                            leadingIcon = {
+                                Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(16.dp))
+                            }
+                        )
+                    }
+                    if (model.id.contains(":free")) {
+                        AssistChip(
+                            onClick = {},
+                            enabled = false,
+                            label = { Text("Free") },
+                            leadingIcon = {
+                                Icon(Icons.Default.Savings, contentDescription = null, modifier = Modifier.size(16.dp))
+                            }
+                        )
+                    }
+                }
+            }
+        },
         leadingContent = {
-            RadioButton(
-                selected = isSelected,
-                onClick = onClick
-            )
+            RadioButton(selected = isSelected, onClick = onClick)
         },
-        modifier = Modifier.clickable(onClick = onClick)
+        colors = ListItemDefaults.colors(
+            containerColor = if (isSelected) MaterialTheme.colorScheme.secondaryContainer
+            else MaterialTheme.colorScheme.surface
+        ),
+        modifier = Modifier
+            .padding(horizontal = 12.dp, vertical = 4.dp)
+            .clip(MaterialTheme.shapes.medium)
+            .clickable(onClick = onClick)
     )
 }
 
@@ -1180,66 +1377,54 @@ fun SystemPromptDialog(
     onDismiss: () -> Unit
 ) {
     var prompt by remember { mutableStateOf(currentPrompt) }
-    
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        Card(
-            modifier = Modifier
-                .fillMaxWidth(0.95f)
-                .fillMaxHeight(0.7f)
+        Surface(
+            modifier = Modifier.fillMaxWidth(0.95f).fillMaxHeight(0.7f),
+            shape = RoundedCornerShape(28.dp),
+            tonalElevation = 6.dp
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(16.dp)
-            ) {
-                Text(
-                    "System Prompt",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
-                
+            Column(modifier = Modifier.fillMaxSize().padding(20.dp)) {
+                Text("System Prompt",
+                    style = MaterialTheme.typography.titleLarge)
+
                 Spacer(modifier = Modifier.height(8.dp))
-                
-                Text(
-                    "This prompt defines how the AI assistant behaves.",
+
+                Text("This prompt defines how the AI assistant behaves.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+
                 Spacer(modifier = Modifier.height(16.dp))
-                
+
                 OutlinedTextField(
                     value = prompt,
                     onValueChange = { prompt = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
+                    modifier = Modifier.fillMaxWidth().weight(1f),
                     label = { Text("System Prompt") },
-                    placeholder = { Text("Enter instructions for the AI...") }
+                    placeholder = { Text("Enter instructions for the AI...") },
+                    shape = RoundedCornerShape(16.dp)
                 )
-                
+
                 Spacer(modifier = Modifier.height(16.dp))
-                
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     OutlinedButton(
                         onClick = { prompt = SettingsManager.DEFAULT_SYSTEM_PROMPT },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("Reset")
-                    }
-                    
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp)
+                    ) { Text("Reset") }
+
                     Button(
                         onClick = { onPromptSaved(prompt) },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("Save")
-                    }
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp)
+                    ) { Text("Save") }
                 }
             }
         }
@@ -1254,60 +1439,44 @@ fun ApiKeyDialog(
 ) {
     var apiKey by remember { mutableStateOf("") }
     var isVisible by remember { mutableStateOf(false) }
-    
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("OpenRouter API Key") },
         text = {
             Column {
                 if (hasExistingKey) {
-                    Text(
-                        "An API key is already configured. Enter a new key to replace it.",
+                    Text("An API key is already configured. Enter a new key to replace it.",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(modifier = Modifier.height(8.dp))
                 }
-                
-                Text(
-                    "Get your API key from openrouter.ai",
-                    style = MaterialTheme.typography.bodySmall
-                )
-                
+                Text("Get your API key from openrouter.ai",
+                    style = MaterialTheme.typography.bodySmall)
                 Spacer(modifier = Modifier.height(16.dp))
-                
                 OutlinedTextField(
                     value = apiKey,
                     onValueChange = { apiKey = it },
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("API Key") },
                     singleLine = true,
-                    visualTransformation = if (isVisible) VisualTransformation.None 
-                                          else PasswordVisualTransformation(),
+                    shape = RoundedCornerShape(14.dp),
+                    visualTransformation = if (isVisible) VisualTransformation.None else PasswordVisualTransformation(),
                     trailingIcon = {
                         IconButton(onClick = { isVisible = !isVisible }) {
-                            Icon(
-                                if (isVisible) Icons.Default.VisibilityOff 
-                                else Icons.Default.Visibility,
-                                contentDescription = "Toggle visibility"
-                            )
+                            Icon(if (isVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility, "Toggle")
                         }
                     }
                 )
             }
         },
         confirmButton = {
-            Button(
-                onClick = { onApiKeySaved(apiKey) },
-                enabled = apiKey.isNotBlank()
-            ) {
+            Button(onClick = { onApiKeySaved(apiKey) }, enabled = apiKey.isNotBlank()) {
                 Text("Save")
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
+            TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
 }
@@ -1321,76 +1490,51 @@ fun BraveApiKeyDialog(
     var apiKey by remember { mutableStateOf("") }
     var isVisible by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Brave Search API Key") },
         text = {
             Column {
                 if (hasExistingKey) {
-                    Text(
-                        "An API key is already configured. Enter a new key to replace it.",
+                    Text("An API key is already configured. Enter a new key to replace it.",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(modifier = Modifier.height(8.dp))
                 }
-                
-                Text(
-                    "Brave Search API provides privacy-focused web search.\n\n" +
-                    "• Free tier: 2,000 queries/month\n" +
-                    "• Fast and accurate results\n" +
-                    "• No tracking, no ads",
-                    style = MaterialTheme.typography.bodySmall
-                )
-                
+                Text("Brave Search API provides privacy-focused web search.\n\n• Free tier: 2,000 queries/month\n• Fast and accurate results\n• No tracking, no ads",
+                    style = MaterialTheme.typography.bodySmall)
                 Spacer(modifier = Modifier.height(8.dp))
-                
-                TextButton(
-                    onClick = {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://brave.com/search/api/"))
-                        context.startActivity(intent)
-                    }
-                ) {
-                    Icon(Icons.AutoMirrored.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
+                TextButton(onClick = {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://brave.com/search/api/"))
+                    context.startActivity(intent)
+                }) {
+                    Icon(Icons.AutoMirrored.Default.OpenInNew, null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
                     Text("Get API Key at brave.com/search/api")
                 }
-                
                 Spacer(modifier = Modifier.height(8.dp))
-                
                 OutlinedTextField(
                     value = apiKey,
                     onValueChange = { apiKey = it },
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("API Key") },
                     singleLine = true,
-                    visualTransformation = if (isVisible) VisualTransformation.None 
-                                          else PasswordVisualTransformation(),
+                    shape = RoundedCornerShape(14.dp),
+                    visualTransformation = if (isVisible) VisualTransformation.None else PasswordVisualTransformation(),
                     trailingIcon = {
                         IconButton(onClick = { isVisible = !isVisible }) {
-                            Icon(
-                                if (isVisible) Icons.Default.VisibilityOff 
-                                else Icons.Default.Visibility,
-                                contentDescription = "Toggle visibility"
-                            )
+                            Icon(if (isVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility, "Toggle")
                         }
                     }
                 )
             }
         },
         confirmButton = {
-            Button(
-                onClick = { onApiKeySaved(apiKey) },
-                enabled = apiKey.isNotBlank()
-            ) {
-                Text("Save")
-            }
+            Button(onClick = { onApiKeySaved(apiKey) }, enabled = apiKey.isNotBlank()) { Text("Save") }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
+            TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
 }
@@ -1402,49 +1546,36 @@ fun CustomModelDialog(
     onDismiss: () -> Unit
 ) {
     var modelId by remember { mutableStateOf(currentCustomModel) }
-    
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Custom Model ID") },
         text = {
             Column {
-                Text(
-                    "Enter the model ID from OpenRouter (e.g., openai/gpt-4-turbo)",
+                Text("Enter the model ID from OpenRouter (e.g., openai/gpt-5.4-mini)",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(modifier = Modifier.height(16.dp))
-                
                 OutlinedTextField(
                     value = modelId,
                     onValueChange = { modelId = it },
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("Model ID") },
                     placeholder = { Text("provider/model-name") },
-                    singleLine = true
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp)
                 )
-                
                 Spacer(modifier = Modifier.height(8.dp))
-                
-                Text(
-                    "Leave empty to use selected model from list",
+                Text("Leave empty to use selected model from list",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },
         confirmButton = {
-            Button(
-                onClick = { onModelSaved(modelId.trim()) }
-            ) {
-                Text("Save")
-            }
+            Button(onClick = { onModelSaved(modelId.trim()) }) { Text("Save") }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
+            TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
 }
@@ -1460,72 +1591,53 @@ fun LanguageSelectionDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        Card(
-            modifier = Modifier
-                .fillMaxWidth(0.9f)
-                .padding(16.dp),
-            shape = MaterialTheme.shapes.extraLarge
+        Surface(
+            modifier = Modifier.fillMaxWidth(0.9f).padding(16.dp),
+            shape = MaterialTheme.shapes.extraLarge,
+            tonalElevation = 6.dp
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text(
-                    text = "Select Voice Language",
+            Column(modifier = Modifier.padding(20.dp)) {
+                Text("Select Voice Language",
                     style = MaterialTheme.typography.headlineSmall,
-                    modifier = Modifier.padding(bottom = 16.dp)
-                )
-                
+                    modifier = Modifier.padding(bottom = 16.dp))
+
                 LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 400.dp)
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp)
                 ) {
                     items(VoskTranscriber.AVAILABLE_LANGUAGES) { language ->
                         val isDownloaded = downloadedLanguages.contains(language.code)
                         val isSelected = currentLanguage == language.code
-                        
+
                         ListItem(
-                            modifier = Modifier
-                                .clickable { onLanguageSelected(language.code) }
-                                .padding(vertical = 2.dp),
-                            headlineContent = { 
-                                Text(
-                                    text = language.displayName,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                                )
+                            modifier = Modifier.clickable { onLanguageSelected(language.code) }.padding(vertical = 2.dp),
+                            headlineContent = {
+                                Text(language.displayName,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal)
                             },
                             supportingContent = {
                                 Text(
-                                    text = if (isDownloaded) "Downloaded ✓" else "~${language.sizeBytes / 1_000_000}MB download",
-                                    style = MaterialTheme.typography.bodySmall
-                                )
+                                    if (isDownloaded) "Downloaded ✓" else "~${language.sizeBytes / 1_000_000}MB download",
+                                    style = MaterialTheme.typography.bodySmall)
                             },
                             leadingContent = {
-                                RadioButton(
-                                    selected = isSelected,
-                                    onClick = { onLanguageSelected(language.code) }
-                                )
+                                RadioButton(selected = isSelected,
+                                    onClick = { onLanguageSelected(language.code) })
                             },
                             trailingContent = {
                                 if (isDownloaded) {
-                                    Icon(
-                                        Icons.Default.CheckCircle,
-                                        contentDescription = "Downloaded",
-                                        tint = MaterialTheme.colorScheme.primary
-                                    )
+                                    Icon(Icons.Default.CheckCircle, "Downloaded",
+                                        tint = MaterialTheme.colorScheme.primary)
                                 }
                             }
                         )
                     }
                 }
-                
+
                 Spacer(modifier = Modifier.height(16.dp))
-                
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    TextButton(onClick = onDismiss) {
-                        Text("Cancel")
-                    }
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
                 }
             }
         }
@@ -1541,76 +1653,109 @@ fun ExaApiKeyDialog(
     var apiKey by remember { mutableStateOf("") }
     var isVisible by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Exa AI API Key") },
         text = {
             Column {
                 if (hasExistingKey) {
-                    Text(
-                        "An API key is already configured. Enter a new key to replace it.",
+                    Text("An API key is already configured. Enter a new key to replace it.",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(modifier = Modifier.height(8.dp))
                 }
-                
-                Text(
-                    "Exa AI provides semantic search with AI-powered results.\n\n" +
-                    "• Neural & keyword search\n" +
-                    "• High-quality content extraction\n" +
-                    "• Great for research queries",
-                    style = MaterialTheme.typography.bodySmall
-                )
-                
+                Text("Exa AI provides semantic search with AI-powered results.\n\n• Neural & keyword search\n• High-quality content extraction\n• Great for research queries",
+                    style = MaterialTheme.typography.bodySmall)
                 Spacer(modifier = Modifier.height(8.dp))
-                
-                TextButton(
-                    onClick = {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://dashboard.exa.ai/api-keys"))
-                        context.startActivity(intent)
-                    }
-                ) {
-                    Icon(Icons.AutoMirrored.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
+                TextButton(onClick = {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://dashboard.exa.ai/api-keys"))
+                    context.startActivity(intent)
+                }) {
+                    Icon(Icons.AutoMirrored.Default.OpenInNew, null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
                     Text("Get API Key at dashboard.exa.ai")
                 }
-                
                 Spacer(modifier = Modifier.height(8.dp))
-                
                 OutlinedTextField(
                     value = apiKey,
                     onValueChange = { apiKey = it },
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("API Key") },
                     singleLine = true,
-                    visualTransformation = if (isVisible) VisualTransformation.None 
-                                          else PasswordVisualTransformation(),
+                    shape = RoundedCornerShape(14.dp),
+                    visualTransformation = if (isVisible) VisualTransformation.None else PasswordVisualTransformation(),
                     trailingIcon = {
                         IconButton(onClick = { isVisible = !isVisible }) {
-                            Icon(
-                                if (isVisible) Icons.Default.VisibilityOff 
-                                else Icons.Default.Visibility,
-                                contentDescription = "Toggle visibility"
-                            )
+                            Icon(if (isVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility, "Toggle")
                         }
                     }
                 )
             }
         },
         confirmButton = {
-            Button(
-                onClick = { onApiKeySaved(apiKey) },
-                enabled = apiKey.isNotBlank()
-            ) {
-                Text("Save")
-            }
+            Button(onClick = { onApiKeySaved(apiKey) }, enabled = apiKey.isNotBlank()) { Text("Save") }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+@Composable
+fun LangSearchApiKeyDialog(
+    hasExistingKey: Boolean,
+    onApiKeySaved: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var apiKey by remember { mutableStateOf("") }
+    var isVisible by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("LangSearch API Key") },
+        text = {
+            Column {
+                if (hasExistingKey) {
+                    Text("An API key is already configured. Enter a new key to replace it.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+                Text("LangSearch provides a free web search API for LLM applications.\n\n• Free tier available\n• Hybrid keyword + vector search\n• No credit card required",
+                    style = MaterialTheme.typography.bodySmall)
+                Spacer(modifier = Modifier.height(8.dp))
+                TextButton(onClick = {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://langsearch.com"))
+                    context.startActivity(intent)
+                }) {
+                    Icon(Icons.AutoMirrored.Default.OpenInNew, null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Get API Key at langsearch.com")
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = apiKey,
+                    onValueChange = { apiKey = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("API Key") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
+                    visualTransformation = if (isVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(onClick = { isVisible = !isVisible }) {
+                            Icon(if (isVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility, "Toggle")
+                        }
+                    }
+                )
             }
+        },
+        confirmButton = {
+            Button(onClick = { onApiKeySaved(apiKey) }, enabled = apiKey.isNotBlank()) { Text("Save") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
 }
@@ -1626,67 +1771,39 @@ fun SearchEngineDialog(
         title = { Text("Select Search Engine") },
         text = {
             Column {
-                // Brave Search option
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onEngineSelected(SettingsManager.SEARCH_BRAVE) }
-                        .padding(vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    RadioButton(
-                        selected = currentEngine == SettingsManager.SEARCH_BRAVE,
-                        onClick = { onEngineSelected(SettingsManager.SEARCH_BRAVE) }
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text("Brave Search", style = MaterialTheme.typography.bodyLarge)
-                        Text(
-                            "Privacy-focused, 2000 free queries/month",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                listOf(
+                    Triple(SettingsManager.SEARCH_BRAVE, "Brave Search", "Privacy-focused, 2000 free queries/month"),
+                    Triple(SettingsManager.SEARCH_EXA, "Exa AI", "Semantic search with AI-powered results"),
+                    Triple(SettingsManager.SEARCH_LANGSEARCH, "LangSearch", "Free web search API for LLM applications")
+                ).forEachIndexed { index, (engine, name, desc) ->
+                    if (index > 0) HorizontalDivider()
+                    Row(
+                        modifier = Modifier.fillMaxWidth()
+                            .clickable { onEngineSelected(engine) }
+                            .padding(vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = currentEngine == engine,
+                            onClick = { onEngineSelected(engine) }
                         )
-                    }
-                }
-                
-                HorizontalDivider()
-                
-                // Exa AI option
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onEngineSelected(SettingsManager.SEARCH_EXA) }
-                        .padding(vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    RadioButton(
-                        selected = currentEngine == SettingsManager.SEARCH_EXA,
-                        onClick = { onEngineSelected(SettingsManager.SEARCH_EXA) }
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text("Exa AI", style = MaterialTheme.typography.bodyLarge)
-                        Text(
-                            "Semantic search with AI-powered results",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(name, style = MaterialTheme.typography.bodyLarge)
+                            Text(desc, style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
                 }
             }
         },
         confirmButton = {},
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
+            TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
 }
 
-/**
- * Section for managing local AI models
- */
 @Composable
 fun LocalModelsSection(
     assistantService: com.satory.graphenosai.service.AssistantService?,
@@ -1694,8 +1811,8 @@ fun LocalModelsSection(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val localModelManager = remember { com.satory.graphenosai.llm.LocalModelManager(context) }
-    
+    val localModelManager = remember { LocalModelManager(context) }
+
     var downloadedModels by remember { mutableStateOf(localModelManager.getDownloadedModels()) }
     var selectedLocalModel by remember { mutableStateOf(settingsManager.localModelId) }
     var isDownloading by remember { mutableStateOf(false) }
@@ -1703,18 +1820,15 @@ fun LocalModelsSection(
     var downloadingModelId by remember { mutableStateOf<String?>(null) }
     var downloadError by remember { mutableStateOf<String?>(null) }
     var showModelListDialog by remember { mutableStateOf(false) }
-    
-    // Refresh downloaded models
+
     fun refreshModels() {
         downloadedModels = localModelManager.getDownloadedModels()
     }
-    
+
     SettingsSection(title = "Local AI Models") {
-        // Current model info
-        val currentModelInfo = com.satory.graphenosai.llm.LocalModelManager.AVAILABLE_MODELS
-            .find { it.id == selectedLocalModel }
+        val currentModelInfo = LocalModelManager.AVAILABLE_MODELS.find { it.id == selectedLocalModel }
         val isCurrentModelDownloaded = localModelManager.isModelDownloaded(selectedLocalModel)
-        
+
         SettingsItem(
             icon = Icons.Default.SmartToy,
             title = "Active Model",
@@ -1725,100 +1839,83 @@ fun LocalModelsSection(
             },
             onClick = { showModelListDialog = true }
         )
-        
-        // Download status / progress
+
         if (isDownloading) {
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
             ) {
-                val downloadingModel = com.satory.graphenosai.llm.LocalModelManager.AVAILABLE_MODELS
-                    .find { it.id == downloadingModelId }
-                Text(
-                    "Downloading ${downloadingModel?.name ?: "model"}...",
-                    style = MaterialTheme.typography.bodyMedium
-                )
+                val downloadingModel = LocalModelManager.AVAILABLE_MODELS.find { it.id == downloadingModelId }
+                Text("Downloading ${downloadingModel?.name ?: "model"}...",
+                    style = MaterialTheme.typography.bodyMedium)
                 Spacer(modifier = Modifier.height(8.dp))
-                LinearProgressIndicator(
-                    progress = { downloadProgress / 100f },
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                LinearProgressIndicator(progress = { downloadProgress / 100f },
+                    modifier = Modifier.fillMaxWidth())
                 Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    "$downloadProgress%",
+                Text("$downloadProgress%",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        
-        // Download error
+
         if (downloadError != null) {
-            Text(
-                text = "❌ $downloadError",
+            Text("$downloadError",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-            )
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+            downloadError = null
         }
-        
-        // Downloaded models count
+
         val totalStorage = localModelManager.getTotalStorageUsed()
         val storageText = when {
             totalStorage >= 1_000_000_000 -> String.format("%.1f GB", totalStorage / 1_000_000_000.0)
             totalStorage >= 1_000_000 -> String.format("%.1f MB", totalStorage / 1_000_000.0)
             else -> "0 MB"
         }
-        
-        Text(
-            text = "${downloadedModels.size} model(s) downloaded • $storageText used",
+
+        Text("${downloadedModels.size} model(s) downloaded • $storageText used",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-        )
-        
-        // Info text
-        Text(
-            text = "Models run entirely on your device. Recommended: 8GB+ RAM for best performance.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-        )
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+
+        Surface(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        ) {
+            Text("Models run entirely on your device. Recommended: 8GB+ RAM for best performance.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(12.dp))
+        }
     }
-    
-    // Model list dialog
+
     if (showModelListDialog) {
         AlertDialog(
             onDismissRequest = { showModelListDialog = false },
             title = { Text("Local AI Models") },
             text = {
-                LazyColumn(
-                    modifier = Modifier.heightIn(max = 400.dp)
-                ) {
-                    items(com.satory.graphenosai.llm.LocalModelManager.AVAILABLE_MODELS) { model ->
+                LazyColumn(modifier = Modifier.heightIn(max = 400.dp)) {
+                    items(LocalModelManager.AVAILABLE_MODELS) { model ->
                         val isDownloaded = localModelManager.isModelDownloaded(model.id)
                         val isSelected = selectedLocalModel == model.id
                         val isThisDownloading = downloadingModelId == model.id && isDownloading
-                        
-                        Card(
+
+                        Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(vertical = 4.dp)
                                 .clickable(enabled = !isThisDownloading) {
                                     if (isDownloaded) {
-                                        // Select this model
                                         selectedLocalModel = model.id
                                         settingsManager.localModelId = model.id
                                         assistantService?.loadLocalModel(model.id)
                                         showModelListDialog = false
                                     } else {
-                                        // Start download
                                         isDownloading = true
                                         downloadingModelId = model.id
                                         downloadError = null
                                         downloadProgress = 0
-                                        
+
                                         scope.launch {
                                             localModelManager.downloadModel(model.id).collect { progress ->
                                                 when (progress) {
@@ -1829,7 +1926,6 @@ fun LocalModelsSection(
                                                         isDownloading = false
                                                         downloadingModelId = null
                                                         refreshModels()
-                                                        // Auto-select downloaded model
                                                         selectedLocalModel = model.id
                                                         settingsManager.localModelId = model.id
                                                         assistantService?.loadLocalModel(model.id)
@@ -1845,80 +1941,61 @@ fun LocalModelsSection(
                                         }
                                     }
                                 },
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (isSelected && isDownloaded) 
-                                    MaterialTheme.colorScheme.primaryContainer 
-                                else 
-                                    MaterialTheme.colorScheme.surface
-                            )
+                            shape = RoundedCornerShape(16.dp),
+                            tonalElevation = if (isSelected && isDownloaded) 2.dp else 0.dp,
+                            color = if (isSelected && isDownloaded) MaterialTheme.colorScheme.primaryContainer
+                            else MaterialTheme.colorScheme.surface
                         ) {
-                            Column(
-                                modifier = Modifier.padding(12.dp)
-                            ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            model.name,
-                                            fontWeight = FontWeight.Medium
-                                        )
+                                        Text(model.name, style = MaterialTheme.typography.bodyLarge)
                                         if (model.recommended) {
                                             Spacer(modifier = Modifier.width(8.dp))
-                                            Text(
-                                                "⭐",
-                                                style = MaterialTheme.typography.bodySmall
-                                            )
+                                            Surface(
+                                                shape = RoundedCornerShape(4.dp),
+                                                color = MaterialTheme.colorScheme.tertiaryContainer
+                                            ) {
+                                                Text("Recommended",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                                            }
                                         }
                                     }
-                                    
+
                                     if (isDownloaded) {
                                         if (isSelected) {
-                                            Icon(
-                                                Icons.Default.CheckCircle,
-                                                contentDescription = "Selected",
+                                            Icon(Icons.Default.CheckCircle, "Selected",
                                                 tint = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.size(20.dp)
-                                            )
+                                                modifier = Modifier.size(20.dp))
                                         } else {
-                                            Icon(
-                                                Icons.Default.Download,
-                                                contentDescription = "Downloaded",
+                                            Icon(Icons.Default.Download, "Downloaded",
                                                 tint = MaterialTheme.colorScheme.tertiary,
-                                                modifier = Modifier.size(20.dp)
-                                            )
+                                                modifier = Modifier.size(20.dp))
                                         }
                                     } else if (isThisDownloading) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(20.dp),
-                                            strokeWidth = 2.dp
-                                        )
+                                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                                     } else {
-                                        Text(
-                                            model.formattedSize(),
+                                        Text(model.formattedSize(),
                                             style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                 }
-                                
+
                                 Spacer(modifier = Modifier.height(4.dp))
-                                
-                                Text(
-                                    model.description,
+                                Text(model.description,
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+
                                 if (!isDownloaded && !isThisDownloading) {
                                     Spacer(modifier = Modifier.height(4.dp))
-                                    Text(
-                                        "Tap to download",
+                                    Text("Tap to download",
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
+                                        color = MaterialTheme.colorScheme.primary)
                                 }
                             }
                         }
@@ -1926,34 +2003,24 @@ fun LocalModelsSection(
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showModelListDialog = false }) {
-                    Text("Close")
-                }
+                TextButton(onClick = { showModelListDialog = false }) { Text("Close") }
             },
             dismissButton = {
-                // Delete downloaded models button
                 if (downloadedModels.isNotEmpty()) {
-                    TextButton(
-                        onClick = {
-                            scope.launch {
-                                downloadedModels.forEach { model ->
-                                    localModelManager.deleteModel(model.id)
-                                }
-                                refreshModels()
+                    TextButton(onClick = {
+                        scope.launch {
+                            downloadedModels.forEach { model ->
+                                localModelManager.deleteModel(model.id)
                             }
+                            refreshModels()
                         }
-                    ) {
-                        Text("Delete All", color = MaterialTheme.colorScheme.error)
-                    }
+                    }) { Text("Delete All", color = MaterialTheme.colorScheme.error) }
                 }
             }
         )
     }
 }
 
-/**
- * Dialog for selecting local models from downloaded collection
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun LocalModelSelectionDialog(
@@ -1965,31 +2032,26 @@ private fun LocalModelSelectionDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        Card(
-            modifier = Modifier
-                .fillMaxWidth(0.95f)
-                .fillMaxHeight(0.8f)
+        Surface(
+            modifier = Modifier.fillMaxWidth(0.95f).fillMaxHeight(0.8f),
+            shape = RoundedCornerShape(28.dp),
+            tonalElevation = 6.dp
         ) {
             Column {
                 TopAppBar(
                     title = { Text("Select Local Model") },
                     navigationIcon = {
                         IconButton(onClick = onDismiss) {
-                            Icon(Icons.Default.Close, contentDescription = "Close")
+                            Icon(Icons.Default.Close, "Close")
                         }
                     }
                 )
-                
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize()
-                ) {
+
+                LazyColumn(modifier = Modifier.fillMaxSize()) {
                     items(LocalModelManager.AVAILABLE_MODELS) { model ->
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    onModelSelected(model.id)
-                                }
+                            modifier = Modifier.fillMaxWidth()
+                                .clickable { onModelSelected(model.id) }
                                 .padding(16.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -1999,16 +2061,11 @@ private fun LocalModelSelectionDialog(
                             )
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    model.name,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Medium
-                                )
-                                Text(
-                                    model.description,
+                                Text(model.name,
+                                    style = MaterialTheme.typography.bodyMedium)
+                                Text(model.description,
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }

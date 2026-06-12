@@ -30,22 +30,30 @@ class OpenRouterClient(
         private const val MAX_TOKENS = 4096
         private const val TEMPERATURE = 0.3f
         
-        private const val DEFAULT_MODEL = "openai/gpt-4o-mini"
+        private const val DEFAULT_MODEL = "openai/gpt-5.4-mini"
         
         // Vision-capable models
         private val VISION_MODELS = listOf(
-            "openai/gpt-4o",
-            "openai/gpt-4o-mini", 
-            "anthropic/claude-3.5-sonnet",
-            "anthropic/claude-3-haiku",
-            "google/gemini-flash-1.5",
-            "google/gemini-pro-1.5"
+            "openai/gpt-5.5",
+            "openai/gpt-5.4-mini",
+            "openai/gpt-chat-latest",
+            "anthropic/claude-opus-4.8",
+            "anthropic/claude-sonnet-4.6",
+            "anthropic/claude-haiku-4.5",
+            "google/gemini-3.5-flash",
+            "google/gemini-3.1-pro-preview",
+            "mistralai/mistral-large-2512",
+            "mistralai/mistral-medium-3-5",
+            "qwen/qwen3.7-plus",
+            "meta-llama/llama-4-maverick",
+            "meta-llama/llama-4-scout",
+            "nex-agi/nex-n2-pro:free"
         )
         
         private val FALLBACK_MODELS = listOf(
-            "openai/gpt-4o-mini",
-            "google/gemini-flash-1.5",
-            "meta-llama/llama-3-8b-instruct"
+            "openai/gpt-5.4-mini",
+            "google/gemini-3.5-flash",
+            "openai/gpt-oss-20b:free"
         )
         
         const val DEFAULT_SYSTEM_PROMPT = """You are a helpful AI assistant on GrapheneOS (privacy-focused mobile OS).
@@ -54,7 +62,7 @@ class OpenRouterClient(
 - Include URLs when citing sources
 - To open a link, write: [OPEN_URL:https://example.com] (only when explicitly asked)
 - You can analyze screenshots when shared
-- You have access to current web information when I search for you
+- When web search is enabled, you can use current web information. Do not claim you lack internet access; use search context or request web_search for current facts.
 - If unsure, say so honestly
 - Respond in the same language as the user"""
     }
@@ -503,7 +511,7 @@ class OpenRouterClient(
 
                                 // Track finish_reason
                                 if (choice.has("finish_reason") && !choice.isNull("finish_reason")) {
-                                    finishReason = choice.optString("finish_reason", null)
+                                    finishReason = choice.optString("finish_reason")
                                 }
 
                                 // Parse content (type-safe: only accept actual String values)

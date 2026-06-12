@@ -22,6 +22,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -38,7 +39,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.satory.graphenosai.llm.LocalModelManager
@@ -50,10 +51,6 @@ import com.satory.graphenosai.util.PdfResult
 import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
 
-/**
- * Compact Gemini-style overlay that appears at bottom of screen.
- * Can expand to full chat mode.
- */
 class CompactAssistantActivity : ComponentActivity() {
 
     private var assistantService: AssistantService? = null
@@ -84,7 +81,7 @@ class CompactAssistantActivity : ComponentActivity() {
                 val service by serviceState
                 var isExpanded by remember { mutableStateOf(false) }
                 var showHistory by remember { mutableStateOf(false) }
-                
+
                 if (service != null) {
                     val state by service!!.assistantState.collectAsStateWithLifecycle()
                     val response by service!!.response.collectAsStateWithLifecycle()
@@ -92,24 +89,21 @@ class CompactAssistantActivity : ComponentActivity() {
                     val transcription by service!!.transcription.collectAsStateWithLifecycle()
                     val pendingUrls by service!!.pendingUrls.collectAsStateWithLifecycle()
                     val webSearchEnabled by service!!.webSearchEnabled.collectAsStateWithLifecycle()
-                    
-                    // URL selection dialog
+
                     if (pendingUrls.isNotEmpty()) {
                         UrlSelectionDialog(
                             urls = pendingUrls,
-                            onUrlSelected = { url ->
-                                service!!.openUrl(url)
-                            },
+                            onUrlSelected = { url -> service!!.openUrl(url) },
                             onDismiss = { service!!.clearPendingUrls() }
                         )
                     }
-                    
+
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
                             .background(
-                                if (isExpanded || showHistory) MaterialTheme.colorScheme.background 
-                                else Color.Black.copy(alpha = 0.3f)
+                                if (isExpanded || showHistory) MaterialTheme.colorScheme.background
+                                else Color.Black.copy(alpha = 0.4f)
                             )
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
@@ -132,7 +126,6 @@ class CompactAssistantActivity : ComponentActivity() {
                                 )
                             }
                             isExpanded -> {
-                                // Full chat mode
                                 FullChatScreen(
                                     service = service!!,
                                     state = state,
@@ -147,7 +140,6 @@ class CompactAssistantActivity : ComponentActivity() {
                                 )
                             }
                             else -> {
-                                // Compact mode at bottom
                                 CompactAssistantView(
                                     service = service!!,
                                     state = state,
@@ -194,44 +186,38 @@ fun CompactAssistantView(
     val scope = rememberCoroutineScope()
     var textInput by remember { mutableStateOf("") }
     val scrollState = rememberScrollState()
-    
-    // Image attachment state
+
     var selectedImageBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var selectedImageBase64 by remember { mutableStateOf<String?>(null) }
-    
-    // PDF attachment state
+
     var pdfText by remember { mutableStateOf<String?>(null) }
     var pdfSummary by remember { mutableStateOf<String?>(null) }
     var pdfLoading by remember { mutableStateOf(false) }
     var pdfError by remember { mutableStateOf<String?>(null) }
-    
-    // Get web search state
+
     val webSearchEnabled by service.webSearchEnabled.collectAsStateWithLifecycle()
-    
-    // Check if using local AI (offline mode - no web search)
     val isLocalProvider = service.settingsManager.apiProvider == SettingsManager.PROVIDER_LOCAL
-    
-    // Auto-start voice input when opening (like Gemini)
+
     val autoStartVoice = settingsManager.autoStartVoice
     LaunchedEffect(Unit) {
         if (autoStartVoice && state is AssistantState.Idle) {
             service.startVoiceCapture()
         }
     }
-    
-    // Check vision support - works for OpenRouter (not Local)
+
     val currentModel = if (isLocalProvider) service.settingsManager.localModelId else service.settingsManager.selectedModel
-    // For local provider, we don't use cloud model lists
     val currentModelInfo = if (isLocalProvider) null else {
         SettingsManager.AVAILABLE_MODELS.find { it.id == currentModel }
     }
-    // Vision supported if: OpenRouter vision-capable model (not Local)
     val supportsVision = when {
-        isLocalProvider -> false  // Local models don't support vision
+        isLocalProvider -> false
         else -> service.openRouterClient.isVisionCapable()
     }
-    
-    // PDF picker launcher
+    val isGenerating = state is AssistantState.Processing ||
+        state is AssistantState.Searching ||
+        state is AssistantState.Responding ||
+        state is AssistantState.Speaking
+
     val pdfPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -255,62 +241,45 @@ fun CompactAssistantView(
             }
         }
     }
-    
-    // Image picker launcher
+
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
-        android.util.Log.d("CompactAssistantUI", "Image picker result: uri = $uri")
         uri?.let {
-            android.util.Log.d("CompactAssistantUI", "Processing URI: $it")
             try {
                 val inputStream = context.contentResolver.openInputStream(it)
                 val bitmap = BitmapFactory.decodeStream(inputStream)
                 inputStream?.close()
-                
-                if (bitmap == null) {
-                    android.util.Log.e("CompactAssistantUI", "Failed to decode bitmap from URI: $it")
-                    return@let
-                }
-                
-                android.util.Log.d("CompactAssistantUI", "Bitmap decoded: ${bitmap.width}x${bitmap.height}")
-                
+
+                if (bitmap == null) return@let
+
                 val maxSize = 1024
                 val scaledBitmap = if (bitmap.width > maxSize || bitmap.height > maxSize) {
                     val ratio = minOf(maxSize.toFloat() / bitmap.width, maxSize.toFloat() / bitmap.height)
                     Bitmap.createScaledBitmap(bitmap, (bitmap.width * ratio).toInt(), (bitmap.height * ratio).toInt(), true)
                 } else bitmap
-                
+
                 selectedImageBitmap = scaledBitmap
                 val outputStream = ByteArrayOutputStream()
                 scaledBitmap.compress(Bitmap.CompressFormat.JPEG, 85, outputStream)
                 val base64Data = Base64.encodeToString(outputStream.toByteArray(), Base64.NO_WRAP)
                 selectedImageBase64 = base64Data
-                
-                android.util.Log.i("CompactAssistantUI", "Image loaded: ${scaledBitmap.width}x${scaledBitmap.height}, base64 length: ${base64Data.length}")
-            } catch (e: Exception) {
-                android.util.Log.e("CompactAssistantUI", "Error loading image", e)
-            }
-        } ?: android.util.Log.d("CompactAssistantUI", "No image selected")
+            } catch (e: Exception) { }
+        }
     }
-    
-    // Show user input immediately when listening
+
     val displayTranscription = if (state is AssistantState.Listening && transcription.isNotEmpty()) {
         "You: $transcription"
     } else if (transcription.isNotEmpty() && (state is AssistantState.Processing || state is AssistantState.Searching)) {
         "You: $transcription"
-    } else {
-        ""
-    }
-    
-    // Show response
+    } else ""
+
     val displayResponse = when {
         response.isNotEmpty() -> response
         state is AssistantState.Error -> state.message
         else -> ""
     }
-    
-    // Status text when idle or listening
+
     val statusText = when (state) {
         is AssistantState.Listening -> if (transcription.isEmpty()) "Listening..." else ""
         is AssistantState.Processing -> "Thinking..."
@@ -319,107 +288,126 @@ fun CompactAssistantView(
         is AssistantState.Speaking -> ""
         else -> ""
     }
-    
-    Box(
+
+    BoxWithConstraints(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.BottomCenter
     ) {
-        Card(
+        val sheetMaxHeight = maxHeight * 0.92f
+        val responseMaxHeight = if (maxHeight < 420.dp) 120.dp else 200.dp
+
+        Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp)
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .navigationBarsPadding()
+                .heightIn(max = sheetMaxHeight)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
                     onClick = {}
                 ),
-            shape = RoundedCornerShape(28.dp),
-            elevation = CardDefaults.cardElevation(12.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surface
-            )
+            shape = RoundedCornerShape(36.dp),
+            shadowElevation = 24.dp,
+            tonalElevation = 3.dp,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh
         ) {
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp)
+                modifier = Modifier.fillMaxWidth()
             ) {
-                // Header row
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp),
+                    contentAlignment = Alignment.TopCenter
+                ) {
+                    Surface(
+                        modifier = Modifier.width(36.dp).height(4.dp),
+                        shape = RoundedCornerShape(2.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                    ) {}
+                }
+
+                Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Default.AutoAwesome,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Surface(
+                            modifier = Modifier.size(34.dp),
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            tonalElevation = 0.dp
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    Icons.Default.AutoAwesome,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
                         Text(
                             "AI Assistant",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
+                            style = MaterialTheme.typography.titleMedium
                         )
                     }
-                    
+
                     Row {
                         IconButton(onClick = onExpand) {
-                            Icon(
-                                Icons.Default.OpenInFull, 
-                                "Expand",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Icon(Icons.Default.OpenInFull, "Expand",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         IconButton(onClick = onDismiss) {
-                            Icon(
-                                Icons.Default.Close, 
-                                "Close",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Icon(Icons.Default.Close, "Close",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
-                
-                // Content area - shows transcription and response
+
                 if (displayTranscription.isNotEmpty() || displayResponse.isNotEmpty() || statusText.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(12.dp))
-                    
+
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(max = 200.dp)
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                            .padding(12.dp)
+                            .weight(1f, fill = false)
+                            .heightIn(max = responseMaxHeight)
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                            .padding(14.dp)
                             .verticalScroll(scrollState)
                     ) {
-                        // Show what user said
                         if (displayTranscription.isNotEmpty()) {
                             Text(
                                 displayTranscription,
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.Medium
+                                color = MaterialTheme.colorScheme.primary
                             )
                             if (displayResponse.isNotEmpty()) {
                                 Spacer(modifier = Modifier.height(8.dp))
                             }
                         }
-                        
-                        // Status text
+
                         if (statusText.isNotEmpty()) {
-                            Text(
-                                statusText,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(14.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    statusText,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
-                        
-                        // AI Response with Markdown
+
                         if (displayResponse.isNotEmpty()) {
                             if (state is AssistantState.Error) {
                                 Text(
@@ -436,237 +424,182 @@ fun CompactAssistantView(
                                         try {
                                             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
                                             context.startActivity(intent)
-                                        } catch (e: Exception) { /* ignore */ }
+                                        } catch (e: Exception) { }
                                     }
                                 )
                             }
                         }
                     }
-                    
-                    // Auto-scroll to bottom
+
                     LaunchedEffect(displayResponse, displayTranscription) {
                         scrollState.animateScrollTo(scrollState.maxValue)
                     }
                 }
-                
+
                 Spacer(modifier = Modifier.height(12.dp))
-                
-                // Image preview if selected
+
                 selectedImageBitmap?.let { bitmap ->
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 8.dp),
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Image(
                             bitmap = bitmap.asImageBitmap(),
                             contentDescription = "Selected image",
-                            modifier = Modifier
-                                .size(48.dp)
-                                .clip(RoundedCornerShape(8.dp))
+                            modifier = Modifier.size(48.dp).clip(RoundedCornerShape(10.dp))
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            "Image attached",
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text("Image attached",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.weight(1f)
-                        )
-                        IconButton(
-                            onClick = {
-                                selectedImageBitmap = null
-                                selectedImageBase64 = null
-                            },
-                            modifier = Modifier.size(32.dp)
-                        ) {
+                            modifier = Modifier.weight(1f))
+                        IconButton(onClick = {
+                            selectedImageBitmap = null
+                            selectedImageBase64 = null
+                        }, modifier = Modifier.size(32.dp)) {
                             Icon(Icons.Default.Close, "Remove", modifier = Modifier.size(16.dp))
                         }
                     }
                 }
-                
-                // PDF preview if selected
+
                 if (pdfLoading) {
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 8.dp),
+                        modifier = Modifier.padding(bottom = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(24.dp),
-                            strokeWidth = 2.dp
-                        )
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            "Loading PDF...",
+                        Text("Loading PDF...",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-                
+
                 pdfError?.let { error ->
-                    Text(
-                        text = error,
-                        style = MaterialTheme.typography.bodySmall,
+                    Text(error, style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
+                        modifier = Modifier.padding(bottom = 8.dp))
                 }
-                
+
                 pdfSummary?.let { summary ->
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 8.dp),
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            Icons.Default.PictureAsPdf,
-                            contentDescription = "PDF",
+                        Icon(Icons.Default.PictureAsPdf, contentDescription = "PDF",
                             tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(24.dp)
-                        )
+                            modifier = Modifier.size(22.dp))
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            summary,
-                            style = MaterialTheme.typography.bodySmall,
+                        Text(summary, style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.weight(1f)
-                        )
-                        IconButton(
-                            onClick = {
-                                pdfText = null
-                                pdfSummary = null
-                                pdfError = null
-                            },
-                            modifier = Modifier.size(32.dp)
-                        ) {
+                            modifier = Modifier.weight(1f))
+                        IconButton(onClick = {
+                            pdfText = null; pdfSummary = null; pdfError = null
+                        }, modifier = Modifier.size(32.dp)) {
                             Icon(Icons.Default.Close, "Remove", modifier = Modifier.size(16.dp))
                         }
                     }
                 }
-                
-                // Input row
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // Photo button (only if model supports vision)
                     if (supportsVision) {
                         IconButton(
-                            onClick = { 
-                                android.util.Log.d("CompactAssistantUI", "Image button clicked")
-                                imagePickerLauncher.launch("image/*") 
-                            },
+                            onClick = { imagePickerLauncher.launch("image/*") },
+                            enabled = !isGenerating,
                             modifier = Modifier.size(40.dp)
                         ) {
-                            Icon(
-                                Icons.Default.Image,
-                                "Attach image",
-                                tint = if (selectedImageBase64 != null) 
-                                    MaterialTheme.colorScheme.primary 
-                                else 
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Icon(Icons.Default.Image, "Attach image",
+                                tint = if (selectedImageBase64 != null) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
-                    
-                    // PDF button
+
                     IconButton(
-                        onClick = { 
-                            pdfPickerLauncher.launch("application/pdf") 
-                        },
+                        onClick = { pdfPickerLauncher.launch("application/pdf") },
+                        enabled = !isGenerating,
                         modifier = Modifier.size(40.dp)
                     ) {
-                        Icon(
-                            Icons.Default.PictureAsPdf,
-                            "Attach PDF",
-                            tint = if (pdfText != null) 
-                                MaterialTheme.colorScheme.primary 
-                            else 
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Icon(Icons.Default.PictureAsPdf, "Attach PDF",
+                            tint = if (pdfText != null) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    
-                    // Web search toggle - hidden for local AI (offline mode)
+
                     if (!isLocalProvider) {
                         IconButton(
                             onClick = { service.toggleWebSearch() },
+                            enabled = !isGenerating,
                             modifier = Modifier.size(40.dp)
                         ) {
                             Icon(
                                 if (webSearchEnabled) Icons.Default.TravelExplore else Icons.Default.Public,
-                                contentDescription = "Toggle web search",
-                                tint = if (webSearchEnabled) 
-                                    MaterialTheme.colorScheme.primary 
-                                else 
-                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                            )
+                                "Toggle web search",
+                                tint = if (webSearchEnabled) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
                         }
                     }
-                    
+
                     OutlinedTextField(
                         value = textInput,
                         onValueChange = { textInput = it },
                         modifier = Modifier.weight(1f),
-                        placeholder = { 
-                            Text(
-                                "Ask anything...",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            ) 
-                        },
-                        shape = RoundedCornerShape(24.dp),
+                        placeholder = { Text("Ask anything...") },
+                        shape = RoundedCornerShape(28.dp),
                         singleLine = true,
+                        enabled = !isGenerating,
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f),
+                            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
                         )
                     )
-                    
-                    // Voice button
+
                     FilledIconButton(
                         onClick = {
-                            if (state is AssistantState.Listening) {
-                                service.stopVoiceCapture()
-                            } else {
-                                service.startVoiceCapture()
+                            when {
+                                isGenerating -> service.stopResponse()
+                                state is AssistantState.Listening -> service.stopVoiceCapture()
+                                else -> service.startVoiceCapture()
                             }
                         },
                         modifier = Modifier.size(48.dp),
                         colors = IconButtonDefaults.filledIconButtonColors(
-                            containerColor = if (state is AssistantState.Listening)
+                            containerColor = if (isGenerating || state is AssistantState.Listening)
                                 MaterialTheme.colorScheme.error
-                            else
-                                MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.primary
                         )
                     ) {
                         Icon(
-                            if (state is AssistantState.Listening) Icons.Default.Stop else Icons.Default.Mic,
-                            contentDescription = "Voice",
-                            tint = MaterialTheme.colorScheme.onPrimary
+                            when {
+                                isGenerating || state is AssistantState.Listening -> Icons.Default.Stop
+                                else -> Icons.Default.Mic
+                            },
+                            if (isGenerating) "Stop response" else "Voice",
+                            tint = if (isGenerating || state is AssistantState.Listening)
+                                MaterialTheme.colorScheme.onError
+                            else MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(22.dp)
                         )
                     }
-                    
-                    // Send button (only when text entered, image attached, or PDF attached)
-                    AnimatedVisibility(visible = textInput.isNotEmpty() || selectedImageBase64 != null || pdfText != null) {
+
+                    AnimatedVisibility(visible = !isGenerating && (textInput.isNotEmpty() || selectedImageBase64 != null || pdfText != null)) {
                         FilledIconButton(
                             onClick = {
-                                // Capture current values before clearing
                                 val currentText = textInput
                                 val currentImageBase64 = selectedImageBase64
                                 val currentPdfText = pdfText
-                                
-                                // Build query with PDF context if present
+
                                 val queryText = if (currentPdfText != null) {
                                     val userQuery = currentText.ifBlank { "Summarize this document" }
                                     "Document content:\n---\n$currentPdfText\n---\n\nUser question: $userQuery"
                                 } else {
                                     currentText.ifBlank { "What's in this image?" }
                                 }
-                                
+
                                 service.processTextQuery(queryText, currentImageBase64)
                                 textInput = ""
                                 selectedImageBitmap = null
@@ -676,13 +609,11 @@ fun CompactAssistantView(
                             },
                             modifier = Modifier.size(48.dp)
                         ) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.Send, 
-                                "Send",
-                                tint = MaterialTheme.colorScheme.onPrimary
-                            )
+                            Icon(Icons.AutoMirrored.Filled.Send, "Send",
+                                tint = MaterialTheme.colorScheme.onPrimary)
                         }
                     }
+                }
                 }
             }
         }
@@ -707,45 +638,41 @@ fun FullChatScreen(
     val scope = rememberCoroutineScope()
     var textInput by remember { mutableStateOf("") }
     val scrollState = rememberScrollState()
-    
-    // Image attachment state
+
     var selectedImageBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var selectedImageBase64 by remember { mutableStateOf<String?>(null) }
-    
-    // PDF attachment state
+
     var pdfText by remember { mutableStateOf<String?>(null) }
     var pdfSummary by remember { mutableStateOf<String?>(null) }
     var pdfLoading by remember { mutableStateOf(false) }
     var pdfError by remember { mutableStateOf<String?>(null) }
-    
-    // Model selector state
+
     var showModelDialog by remember { mutableStateOf(false) }
-    var currentModel by remember { 
+    var currentModel by remember {
         mutableStateOf(
             if (service.settingsManager.apiProvider == SettingsManager.PROVIDER_LOCAL)
                 service.settingsManager.localModelId
-            else
-                service.settingsManager.getEffectiveModel()
+            else service.settingsManager.getEffectiveModel()
         )
     }
     val isLocalProvider = service.settingsManager.apiProvider == SettingsManager.PROVIDER_LOCAL
-    // For local provider, we don't use cloud model lists
     val currentModelInfo = if (isLocalProvider) null else {
         SettingsManager.AVAILABLE_MODELS.find { it.id == currentModel }
     }
     val currentModelDisplayName = if (isLocalProvider) {
-        com.satory.graphenosai.llm.LocalModelManager.AVAILABLE_MODELS
-            .find { it.id == currentModel }?.name ?: currentModel
+        LocalModelManager.AVAILABLE_MODELS.find { it.id == currentModel }?.name ?: currentModel
     } else {
         currentModelInfo?.name ?: currentModel
     }
-    // Vision supported if: OpenRouter vision-capable model (not Local)
     val supportsVision = when {
         isLocalProvider -> false
         else -> service.openRouterClient.isVisionCapable()
     }
-    
-    // PDF picker launcher
+    val isGenerating = state is AssistantState.Processing ||
+        state is AssistantState.Searching ||
+        state is AssistantState.Responding ||
+        state is AssistantState.Speaking
+
     val pdfPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -769,8 +696,7 @@ fun FullChatScreen(
             }
         }
     }
-    
-    // Image picker launcher
+
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -779,52 +705,36 @@ fun FullChatScreen(
                 val inputStream = context.contentResolver.openInputStream(it)
                 val bitmap = BitmapFactory.decodeStream(inputStream)
                 inputStream?.close()
-                
-                if (bitmap == null) {
-                    android.util.Log.e("FullChatScreen", "Failed to decode bitmap from URI: $it")
-                    return@let
-                }
-                
-                // Resize if too large
+                if (bitmap == null) return@let
+
                 val maxSize = 1024
                 val scaledBitmap = if (bitmap.width > maxSize || bitmap.height > maxSize) {
                     val ratio = minOf(maxSize.toFloat() / bitmap.width, maxSize.toFloat() / bitmap.height)
                     Bitmap.createScaledBitmap(bitmap, (bitmap.width * ratio).toInt(), (bitmap.height * ratio).toInt(), true)
                 } else bitmap
-                
+
                 selectedImageBitmap = scaledBitmap
-                
-                // Convert to base64
                 val outputStream = ByteArrayOutputStream()
                 scaledBitmap.compress(Bitmap.CompressFormat.JPEG, 85, outputStream)
                 val base64Data = Base64.encodeToString(outputStream.toByteArray(), Base64.NO_WRAP)
                 selectedImageBase64 = base64Data
-                
-                android.util.Log.i("FullChatScreen", "Image loaded: ${scaledBitmap.width}x${scaledBitmap.height}, base64 length: ${base64Data.length}")
-            } catch (e: Exception) {
-                android.util.Log.e("FullChatScreen", "Error loading image", e)
-            }
+            } catch (e: Exception) { }
         }
     }
-    
-    // Show user's current input immediately when listening
-    val currentUserInput = if (transcription.isNotEmpty() && 
+
+    val currentUserInput = if (transcription.isNotEmpty() &&
         (state is AssistantState.Listening || state is AssistantState.Processing || state is AssistantState.Searching)) {
         transcription
     } else null
-    
-    // Model selector dialog - different for local vs cloud providers
+
     if (showModelDialog) {
         if (isLocalProvider) {
-            // Local models dialog
             val localModelManager = remember { LocalModelManager(context) }
             AlertDialog(
                 onDismissRequest = { showModelDialog = false },
                 title = { Text("Select Local Model") },
                 text = {
-                    Column(
-                        modifier = Modifier.verticalScroll(rememberScrollState())
-                    ) {
+                    Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                         LocalModelManager.AVAILABLE_MODELS.forEach { model ->
                             val isDownloaded = localModelManager.isModelDownloaded(model.id)
                             Row(
@@ -855,20 +765,15 @@ fun FullChatScreen(
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Column(modifier = Modifier.weight(1f)) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(model.name, fontWeight = FontWeight.Medium)
+                                        Text(model.name, style = MaterialTheme.typography.bodyLarge)
                                         Spacer(modifier = Modifier.width(6.dp))
-                                        // Download status icon
                                         Icon(
-                                            imageVector = if (isDownloaded) 
-                                                Icons.Default.CheckCircle 
-                                            else 
-                                                Icons.Default.CloudDownload,
+                                            imageVector = if (isDownloaded) Icons.Default.CheckCircle
+                                                else Icons.Default.CloudDownload,
                                             contentDescription = if (isDownloaded) "Downloaded" else "Not downloaded",
                                             modifier = Modifier.size(16.dp),
-                                            tint = if (isDownloaded) 
-                                                MaterialTheme.colorScheme.primary 
-                                            else 
-                                                MaterialTheme.colorScheme.onSurfaceVariant
+                                            tint = if (isDownloaded) MaterialTheme.colorScheme.primary
+                                                else MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
                                     Text(
@@ -882,15 +787,13 @@ fun FullChatScreen(
                     }
                 },
                 confirmButton = {
-                    TextButton(onClick = { showModelDialog = false }) {
-                        Text("Cancel")
-                    }
+                    TextButton(onClick = { showModelDialog = false }) { Text("Cancel") }
                 }
             )
         } else {
             var showCustomInput by remember { mutableStateOf(false) }
             val cloudModelList = SettingsManager.AVAILABLE_MODELS
-            
+
             if (showCustomInput) {
                 var customModelText by remember { mutableStateOf(service.settingsManager.customModelId) }
                 AlertDialog(
@@ -898,11 +801,9 @@ fun FullChatScreen(
                     title = { Text("Custom Model ID") },
                     text = {
                         Column {
-                            Text(
-                                "Enter any OpenRouter model ID",
+                            Text("Enter any OpenRouter model ID",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Spacer(modifier = Modifier.height(12.dp))
                             OutlinedTextField(
                                 value = customModelText,
@@ -915,23 +816,19 @@ fun FullChatScreen(
                         }
                     },
                     confirmButton = {
-                        Button(
-                            onClick = {
-                                val trimmed = customModelText.trim()
-                                if (trimmed.isNotBlank()) {
-                                    currentModel = trimmed
-                                    service.settingsManager.customModelId = trimmed
-                                    service.reloadSettings()
-                                }
-                                showCustomInput = false
-                                showModelDialog = false
+                        Button(onClick = {
+                            val trimmed = customModelText.trim()
+                            if (trimmed.isNotBlank()) {
+                                currentModel = trimmed
+                                service.settingsManager.customModelId = trimmed
+                                service.reloadSettings()
                             }
-                        ) { Text("Save") }
+                            showCustomInput = false
+                            showModelDialog = false
+                        }) { Text("Save") }
                     },
                     dismissButton = {
-                        TextButton(onClick = { showCustomInput = false }) {
-                            Text("Cancel")
-                        }
+                        TextButton(onClick = { showCustomInput = false }) { Text("Cancel") }
                     }
                 )
             } else {
@@ -939,9 +836,7 @@ fun FullChatScreen(
                     onDismissRequest = { showModelDialog = false },
                     title = { Text("Select Model") },
                     text = {
-                        Column(
-                            modifier = Modifier.verticalScroll(rememberScrollState())
-                        ) {
+                        Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                             cloudModelList.forEach { model ->
                                 Row(
                                     modifier = Modifier
@@ -969,30 +864,24 @@ fun FullChatScreen(
                                     Spacer(modifier = Modifier.width(12.dp))
                                     Column {
                                         Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Text(model.name, fontWeight = FontWeight.Medium)
+                                            Text(model.name, style = MaterialTheme.typography.bodyLarge)
                                             if (model.supportsVision) {
                                                 Spacer(modifier = Modifier.width(6.dp))
-                                                Icon(
-                                                    Icons.Default.Image,
-                                                    contentDescription = "Supports images",
+                                                Icon(Icons.Default.Image, contentDescription = "Supports images",
                                                     modifier = Modifier.size(16.dp),
-                                                    tint = MaterialTheme.colorScheme.primary
-                                                )
+                                                    tint = MaterialTheme.colorScheme.primary)
                                             }
                                         }
-                                        Text(
-                                            model.description,
+                                        Text(model.description,
                                             style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                 }
                             }
-                            
+
                             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                             Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
+                                modifier = Modifier.fillMaxWidth()
                                     .clickable { showCustomInput = true }
                                     .padding(vertical = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically
@@ -1003,50 +892,37 @@ fun FullChatScreen(
                                 )
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Column {
-                                    Text(
-                                        "Custom model...",
-                                        fontWeight = FontWeight.Medium,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
+                                    Text("Custom model...",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.primary)
                                     Text(
                                         if (service.settingsManager.customModelId.isNotBlank())
                                             service.settingsManager.customModelId
                                         else "Enter any OpenRouter model ID",
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
                         }
                     },
                     confirmButton = {
-                        TextButton(onClick = { showModelDialog = false }) {
-                            Text("Cancel")
-                        }
+                        TextButton(onClick = { showModelDialog = false }) { Text("Cancel") }
                     }
                 )
             }
         }
     }
-    
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
-                    Column(
-                        modifier = Modifier.clickable { showModelDialog = true }
-                    ) {
+                    Column(modifier = Modifier.clickable { showModelDialog = true }) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                currentModelDisplayName,
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Icon(
-                                Icons.Default.ArrowDropDown,
-                                contentDescription = "Change model",
-                                modifier = Modifier.size(20.dp)
-                            )
+                            Text(currentModelDisplayName,
+                                style = MaterialTheme.typography.titleMedium)
+                            Icon(Icons.Default.ArrowDropDown, "Change model",
+                                modifier = Modifier.size(20.dp))
                         }
                         Text(
                             when (state) {
@@ -1060,8 +936,7 @@ fun FullChatScreen(
                                 is AssistantState.Error -> "Error"
                             },
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 },
                 navigationIcon = {
@@ -1070,6 +945,15 @@ fun FullChatScreen(
                     }
                 },
                 actions = {
+                    if (isGenerating) {
+                        FilledTonalIconButton(onClick = { service.stopResponse() }) {
+                            Icon(
+                                Icons.Default.Stop,
+                                contentDescription = "Stop response",
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
                     IconButton(onClick = onShowHistory) {
                         Icon(Icons.Default.History, "Chat History")
                     }
@@ -1089,35 +973,29 @@ fun FullChatScreen(
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shadowElevation = 8.dp,
-                color = MaterialTheme.colorScheme.surface
+                color = MaterialTheme.colorScheme.surfaceContainer
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(12.dp)
+                        .imePadding()
                         .navigationBarsPadding()
                 ) {
-                    // Image preview if selected
                     selectedImageBitmap?.let { bitmap ->
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(bottom = 8.dp),
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Image(
                                 bitmap = bitmap.asImageBitmap(),
                                 contentDescription = "Selected image",
-                                modifier = Modifier
-                                    .size(60.dp)
-                                    .clip(RoundedCornerShape(8.dp))
+                                modifier = Modifier.size(60.dp).clip(RoundedCornerShape(10.dp))
                             )
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                "Image attached",
+                            Text("Image attached",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary
-                            )
+                                color = MaterialTheme.colorScheme.primary)
                             Spacer(modifier = Modifier.weight(1f))
                             IconButton(onClick = {
                                 selectedImageBitmap = null
@@ -1127,166 +1005,126 @@ fun FullChatScreen(
                             }
                         }
                     }
-                    
-                    // PDF loading indicator
+
                     if (pdfLoading) {
-                        Row(
-                            modifier = Modifier.padding(bottom = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(20.dp),
-                                strokeWidth = 2.dp
-                            )
+                        Row(modifier = Modifier.padding(bottom = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                "Loading PDF...",
+                            Text("Loading PDF...",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
-                    
-                    // PDF error
+
                     pdfError?.let { error ->
-                        Text(
-                            text = error,
-                            style = MaterialTheme.typography.bodySmall,
+                        Text(error, style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.padding(bottom = 8.dp)
-                        )
+                            modifier = Modifier.padding(bottom = 8.dp))
                     }
-                    
-                    // PDF preview
+
                     pdfSummary?.let { summary ->
-                        Row(
-                            modifier = Modifier.padding(bottom = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                Icons.Default.PictureAsPdf,
-                                contentDescription = "PDF",
+                        Row(modifier = Modifier.padding(bottom = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.PictureAsPdf, "PDF",
                                 tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(20.dp)
-                            )
+                                modifier = Modifier.size(20.dp))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                summary,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary
-                            )
+                            Text(summary, style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary)
                             Spacer(modifier = Modifier.weight(1f))
                             IconButton(onClick = {
-                                pdfText = null
-                                pdfSummary = null
-                                pdfError = null
+                                pdfText = null; pdfSummary = null; pdfError = null
                             }) {
                                 Icon(Icons.Default.Close, "Remove PDF", modifier = Modifier.size(20.dp))
                             }
                         }
                     }
-                    
+
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        // Photo button (only if model supports vision)
                         if (supportsVision) {
                             IconButton(
-                                onClick = { 
-                                    android.util.Log.d("CompactAssistantUI", "Image button clicked (conditional)")
-                                    imagePickerLauncher.launch("image/*") 
-                                }
+                                onClick = { imagePickerLauncher.launch("image/*") },
+                                enabled = !isGenerating
                             ) {
-                                Icon(
-                                    Icons.Default.Image,
-                                    contentDescription = "Attach image",
-                                    tint = if (selectedImageBase64 != null) 
-                                        MaterialTheme.colorScheme.primary 
-                                    else 
-                                        MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                Icon(Icons.Default.Image, "Attach image",
+                                    tint = if (selectedImageBase64 != null) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
-                        
-                        // PDF button
+
                         IconButton(
-                            onClick = { pdfPickerLauncher.launch("application/pdf") }
+                            onClick = { pdfPickerLauncher.launch("application/pdf") },
+                            enabled = !isGenerating
                         ) {
-                            Icon(
-                                Icons.Default.PictureAsPdf,
-                                contentDescription = "Attach PDF",
-                                tint = if (pdfText != null) 
-                                    MaterialTheme.colorScheme.primary 
-                                else 
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Icon(Icons.Default.PictureAsPdf, "Attach PDF",
+                                tint = if (pdfText != null) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        
-                        // Web search toggle - hidden for local AI (offline mode)
+
                         if (!isLocalProvider) {
                             IconButton(
-                                onClick = onToggleWebSearch
+                                onClick = onToggleWebSearch,
+                                enabled = !isGenerating
                             ) {
                                 Icon(
                                     if (webSearchEnabled) Icons.Default.TravelExplore else Icons.Default.Public,
-                                    contentDescription = "Toggle web search",
-                                    tint = if (webSearchEnabled) 
-                                        MaterialTheme.colorScheme.primary 
-                                    else 
-                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                                )
+                                    "Toggle web search",
+                                    tint = if (webSearchEnabled) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
                             }
                         }
-                        
+
                         OutlinedTextField(
                             value = textInput,
                             onValueChange = { textInput = it },
                             modifier = Modifier.weight(1f),
-                            placeholder = { Text("Ask anything...") },
+                            placeholder = { Text(if (isGenerating) "Generating..." else "Ask anything...") },
                             shape = RoundedCornerShape(24.dp),
-                            singleLine = true
+                            singleLine = true,
+                            enabled = !isGenerating
                         )
-                        
+
                         FilledIconButton(
                             onClick = {
-                                if (state is AssistantState.Listening) {
-                                    service.stopVoiceCapture()
-                                } else {
-                                    service.startVoiceCapture()
+                                when {
+                                    isGenerating -> service.stopResponse()
+                                    state is AssistantState.Listening -> service.stopVoiceCapture()
+                                    else -> service.startVoiceCapture()
                                 }
                             },
                             modifier = Modifier.size(48.dp),
                             colors = IconButtonDefaults.filledIconButtonColors(
-                                containerColor = if (state is AssistantState.Listening)
+                                containerColor = if (isGenerating || state is AssistantState.Listening)
                                     MaterialTheme.colorScheme.error
-                                else
-                                    MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.primary
                             )
                         ) {
                             Icon(
-                                if (state is AssistantState.Listening) Icons.Default.Stop else Icons.Default.Mic,
-                                contentDescription = "Voice",
-                                tint = MaterialTheme.colorScheme.onPrimary
-                            )
+                                if (isGenerating || state is AssistantState.Listening) Icons.Default.Stop else Icons.Default.Mic,
+                                if (isGenerating) "Stop response" else "Voice",
+                                tint = if (isGenerating || state is AssistantState.Listening)
+                                    MaterialTheme.colorScheme.onError
+                                else MaterialTheme.colorScheme.onPrimary)
                         }
-                        
-                        AnimatedVisibility(visible = textInput.isNotEmpty() || selectedImageBase64 != null || pdfText != null) {
+
+                        AnimatedVisibility(visible = !isGenerating && (textInput.isNotEmpty() || selectedImageBase64 != null || pdfText != null)) {
                             FilledIconButton(
                                 onClick = {
-                                    // Capture current values before clearing
                                     val currentText = textInput
                                     val currentImageBase64 = selectedImageBase64
                                     val currentPdfText = pdfText
-                                    
-                                    // Build query with PDF context if present
+
                                     val queryText = if (currentPdfText != null) {
                                         val userQuery = currentText.ifBlank { "Summarize this document" }
                                         "Document content:\n---\n$currentPdfText\n---\n\nUser question: $userQuery"
                                     } else {
                                         currentText.ifBlank { "What's in this image?" }
                                     }
-                                    
+
                                     service.processTextQuery(queryText, currentImageBase64)
                                     textInput = ""
                                     selectedImageBitmap = null
@@ -1296,7 +1134,8 @@ fun FullChatScreen(
                                 },
                                 modifier = Modifier.size(48.dp)
                             ) {
-                                Icon(Icons.AutoMirrored.Filled.Send, "Send", tint = MaterialTheme.colorScheme.onPrimary)
+                                Icon(Icons.AutoMirrored.Filled.Send, "Send",
+                                    tint = MaterialTheme.colorScheme.onPrimary)
                             }
                         }
                     }
@@ -1312,12 +1151,10 @@ fun FullChatScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Welcome message if empty
             if (messages.isEmpty() && response.isEmpty() && currentUserInput == null) {
                 WelcomeMessage()
             }
-            
-            // Chat history
+
             messages.forEach { message ->
                 MessageBubble(
                     isUser = message.role == "user",
@@ -1325,57 +1162,41 @@ fun FullChatScreen(
                     imageBase64 = message.imageBase64
                 )
             }
-            
-            // Current user input (shown immediately)
+
             if (currentUserInput != null) {
-                MessageBubble(
-                    isUser = true,
-                    content = currentUserInput
-                )
+                MessageBubble(isUser = true, content = currentUserInput)
             }
-            
-            // Loading indicator
+
             if (state is AssistantState.Processing || state is AssistantState.Searching) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.Start
                 ) {
-                    Card(
-                        shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant
-                        )
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        tonalElevation = 1.dp,
+                        color = MaterialTheme.colorScheme.surfaceVariant
                     ) {
                         Row(
                             modifier = Modifier.padding(16.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(16.dp),
-                                strokeWidth = 2.dp
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Spacer(modifier = Modifier.width(10.dp))
                             Text(
                                 if (state is AssistantState.Searching) "Searching..." else "Thinking...",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
             }
-            
-            // Current streaming response
+
             if (response.isNotEmpty() && state is AssistantState.Responding) {
-                MessageBubble(
-                    isUser = false,
-                    content = response,
-                    isStreaming = true
-                )
+                MessageBubble(isUser = false, content = response, isStreaming = true)
             }
         }
-        
-        // Auto-scroll
+
         LaunchedEffect(messages.size, response, currentUserInput) {
             scrollState.animateScrollTo(scrollState.maxValue)
         }
@@ -1388,39 +1209,42 @@ fun WelcomeMessage() {
         modifier = Modifier.fillMaxWidth(),
         contentAlignment = Alignment.Center
     ) {
-        Card(
+        Surface(
             modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-            ),
-            shape = RoundedCornerShape(20.dp)
+            shape = RoundedCornerShape(24.dp),
+            tonalElevation = 1.dp,
+            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
         ) {
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(24.dp),
+                modifier = Modifier.fillMaxWidth().padding(32.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Icon(
-                    Icons.Default.AutoAwesome,
-                    contentDescription = null,
-                    modifier = Modifier.size(48.dp),
-                    tint = MaterialTheme.colorScheme.primary
-                )
-                Spacer(modifier = Modifier.height(16.dp))
+                Box(
+                    modifier = Modifier
+                        .size(64.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Default.AutoAwesome,
+                        contentDescription = null,
+                        modifier = Modifier.size(32.dp),
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+                Spacer(modifier = Modifier.height(20.dp))
                 Text(
                     "How can I help you?",
                     style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    textAlign = TextAlign.Center
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     "Ask anything or use voice input",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    textAlign = TextAlign.Center
                 )
             }
         }
@@ -1435,24 +1259,21 @@ fun MessageBubble(
     imageBase64: String? = null
 ) {
     val context = LocalContext.current
-    
-    // Decode image if present
+
     val imageBitmap = remember(imageBase64) {
         imageBase64?.let {
             try {
                 val bytes = Base64.decode(it, Base64.DEFAULT)
                 BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-            } catch (e: Exception) {
-                null
-            }
+            } catch (e: Exception) { null }
         }
     }
-    
+
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
     ) {
-        Card(
+        Surface(
             modifier = Modifier.widthIn(max = 320.dp),
             shape = RoundedCornerShape(
                 topStart = if (isUser) 20.dp else 4.dp,
@@ -1460,17 +1281,11 @@ fun MessageBubble(
                 bottomStart = 20.dp,
                 bottomEnd = 20.dp
             ),
-            colors = CardDefaults.cardColors(
-                containerColor = if (isUser) 
-                    MaterialTheme.colorScheme.primary 
-                else 
-                    MaterialTheme.colorScheme.surfaceVariant
-            )
+            tonalElevation = if (isUser) 0.dp else 1.dp,
+            color = if (isUser) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.surfaceVariant
         ) {
-            Column(
-                modifier = Modifier.padding(14.dp)
-            ) {
-                // Show attached image if present
+            Column(modifier = Modifier.padding(14.dp)) {
                 imageBitmap?.let { bitmap ->
                     Image(
                         bitmap = bitmap.asImageBitmap(),
@@ -1478,44 +1293,36 @@ fun MessageBubble(
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(max = 200.dp)
-                            .clip(RoundedCornerShape(8.dp))
+                            .clip(RoundedCornerShape(10.dp))
                     )
                     if (content.isNotBlank()) {
                         Spacer(modifier = Modifier.height(8.dp))
                     }
                 }
-                
+
                 Row(verticalAlignment = Alignment.Top) {
                     if (isUser) {
-                        // Plain text for user messages
                         Text(
                             text = content,
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onPrimary
                         )
                     } else {
-                        // Markdown rendering for AI responses
                         MarkdownText(
                             text = content,
                             color = MaterialTheme.colorScheme.onSurface,
                             linkColor = MaterialTheme.colorScheme.primary,
                             onLinkClick = { url ->
-                                // Check for "open" command patterns
                                 try {
                                     val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
                                     context.startActivity(intent)
-                                } catch (e: Exception) {
-                                    // URL parsing failed
-                                }
+                                } catch (e: Exception) { }
                             }
                         )
                     }
                     if (isStreaming) {
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            "▌",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Text("▌", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -1523,9 +1330,6 @@ fun MessageBubble(
     }
 }
 
-/**
- * Dialog for selecting which URL to open when multiple are detected.
- */
 @Composable
 fun UrlSelectionDialog(
     urls: List<String>,
@@ -1537,55 +1341,44 @@ fun UrlSelectionDialog(
         title = { Text("Open Link") },
         text = {
             Column {
-                Text(
-                    "Which link would you like to open?",
+                Text("Which link would you like to open?",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(modifier = Modifier.height(16.dp))
-                
+
                 urls.forEachIndexed { index, url ->
-                    Card(
+                    Surface(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = 4.dp)
                             .clickable { onUrlSelected(url) },
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant
-                        )
+                        shape = RoundedCornerShape(12.dp),
+                        tonalElevation = 1.dp,
+                        color = MaterialTheme.colorScheme.surfaceVariant
                     ) {
                         Row(
                             modifier = Modifier.padding(12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.OpenInNew,
-                                contentDescription = null,
+                            Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(20.dp)
-                            )
+                                modifier = Modifier.size(20.dp))
                             Spacer(modifier = Modifier.width(12.dp))
                             Text(
                                 text = url.take(50) + if (url.length > 50) "..." else "",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
+                                color = MaterialTheme.colorScheme.onSurface)
                         }
                     }
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
+            TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
 }
 
-/**
- * Screen showing chat history for loading previous conversations.
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatHistoryScreen(
@@ -1594,11 +1387,9 @@ fun ChatHistoryScreen(
     onBack: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    // Use mutableStateOf to allow list updates after deletion
     var chats by remember { mutableStateOf(service.chatHistoryManager.getSavedChats()) }
     var chatToDelete by remember { mutableStateOf<String?>(null) }
-    
-    // Delete confirmation dialog
+
     chatToDelete?.let { chatId ->
         AlertDialog(
             onDismissRequest = { chatToDelete = null },
@@ -1608,22 +1399,17 @@ fun ChatHistoryScreen(
                 TextButton(
                     onClick = {
                         service.chatHistoryManager.deleteChat(chatId)
-                        // Refresh the list after deletion
                         chats = service.chatHistoryManager.getSavedChats()
                         chatToDelete = null
                     }
-                ) {
-                    Text("Delete", color = MaterialTheme.colorScheme.error)
-                }
+                ) { Text("Delete", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = {
-                TextButton(onClick = { chatToDelete = null }) {
-                    Text("Cancel")
-                }
+                TextButton(onClick = { chatToDelete = null }) { Text("Cancel") }
             }
         )
     }
-    
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -1646,32 +1432,21 @@ fun ChatHistoryScreen(
     ) { padding ->
         if (chats.isEmpty()) {
             Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
+                modifier = Modifier.fillMaxSize().padding(padding),
                 contentAlignment = Alignment.Center
             ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Icon(
-                        Icons.Default.History,
-                        contentDescription = null,
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Default.History, contentDescription = null,
                         modifier = Modifier.size(64.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        "No saved chats",
+                    Text("No saved chats",
                         style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        "Your chat history will appear here",
+                    Text("Your chat history will appear here",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         } else {
@@ -1681,7 +1456,7 @@ fun ChatHistoryScreen(
                     .padding(padding)
                     .verticalScroll(rememberScrollState())
                     .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 chats.forEach { chat ->
                     ChatHistoryItem(
@@ -1701,63 +1476,44 @@ fun ChatHistoryItem(
     onClick: () -> Unit,
     onDelete: () -> Unit
 ) {
-    Card(
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onClick() },
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-        ),
-        shape = RoundedCornerShape(16.dp)
+        shape = RoundedCornerShape(16.dp),
+        tonalElevation = 1.dp,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
             verticalAlignment = Alignment.Top
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    chat.title,
+                Text(chat.title,
                     style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1
-                )
+                    maxLines = 1)
                 Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    chat.preview.ifEmpty { "No preview available" },
+                Text(chat.preview.ifEmpty { "No preview available" },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2
-                )
+                    maxLines = 2)
                 Spacer(modifier = Modifier.height(8.dp))
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Text(
-                        "${chat.messageCount} messages",
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("${chat.messageCount} messages",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(
                         java.text.SimpleDateFormat("MMM d, HH:mm", java.util.Locale.getDefault())
                             .format(java.util.Date(chat.timestamp)),
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            
-            IconButton(
-                onClick = onDelete,
-                modifier = Modifier.size(32.dp)
-            ) {
-                Icon(
-                    Icons.Default.Delete,
-                    "Delete",
+
+            IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Default.Delete, "Delete",
                     tint = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.size(18.dp)
-                )
+                    modifier = Modifier.size(18.dp))
             }
         }
     }

@@ -32,6 +32,7 @@ class SecureKeyManager(private val context: Context) {
         private const val PREF_TOKEN_REFRESH_TIME = "token_refresh_time"
         private const val PREF_BRAVE_API_KEY = "brave_api_key"
         private const val PREF_EXA_API_KEY = "exa_api_key"
+        private const val PREF_LANGSEARCH_API_KEY = "langsearch_api_key"
     }
 
     private val keyStore: KeyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply {
@@ -284,6 +285,32 @@ class SecureKeyManager(private val context: Context) {
      */
     fun clearExaApiKey() {
         prefs.edit().remove(PREF_EXA_API_KEY).apply()
+    }
+
+    // ========== LangSearch API Key Management ==========
+
+    fun setLangSearchApiKey(apiKey: String) {
+        val encrypted = encrypt(apiKey)
+        prefs.edit().putString(PREF_LANGSEARCH_API_KEY, encrypted).apply()
+        Log.i(TAG, "LangSearch API key stored securely")
+    }
+
+    fun getLangSearchApiKey(): String? {
+        val encrypted = prefs.getString(PREF_LANGSEARCH_API_KEY, null) ?: return null
+        return try {
+            decrypt(encrypted)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to decrypt LangSearch API key", e)
+            null
+        }
+    }
+
+    fun hasLangSearchApiKey(): Boolean {
+        return prefs.contains(PREF_LANGSEARCH_API_KEY)
+    }
+
+    fun clearLangSearchApiKey() {
+        prefs.edit().remove(PREF_LANGSEARCH_API_KEY).apply()
     }
 
     // ========== Token Rotation Support ==========

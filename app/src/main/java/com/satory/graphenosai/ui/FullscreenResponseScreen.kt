@@ -6,6 +6,7 @@ import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -40,21 +41,20 @@ fun FullscreenResponseScreen(
                 title = { Text("Response", maxLines = 1) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.Close, contentDescription = "Close")
+                        Icon(Icons.Default.Close, "Close")
                     }
                 },
                 actions = {
-                    IconButton(onClick = {
-                        copyToClipboard(context, response)
-                    }) {
-                        Icon(Icons.Default.ContentCopy, contentDescription = "Copy")
+                    IconButton(onClick = { copyToClipboard(context, response) }) {
+                        Icon(Icons.Default.ContentCopy, "Copy")
                     }
-                    IconButton(onClick = {
-                        shareText(context, response)
-                    }) {
-                        Icon(Icons.Default.Share, contentDescription = "Share")
+                    IconButton(onClick = { shareText(context, response) }) {
+                        Icon(Icons.Default.Share, "Share")
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface
+                )
             )
         }
     ) { padding ->
@@ -63,35 +63,28 @@ fun FullscreenResponseScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(scrollState)
-                .padding(16.dp)
+                .padding(20.dp)
         ) {
-            // Original query
             if (query.isNotBlank()) {
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer
-                    ),
+                Surface(
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    shape = RoundedCornerShape(16.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Text(
-                            "Your question:",
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Text("Your question:",
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
-                        )
+                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f))
                         Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            query,
+                        Text(query,
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer
-                        )
+                            color = MaterialTheme.colorScheme.onSecondaryContainer)
                     }
                 }
                 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(20.dp))
             }
             
-            // Response with Markdown rendering
             SelectionContainer {
                 MarkdownText(
                     markdown = response,
@@ -134,10 +127,9 @@ private fun parseMarkdown(
         
         while (i < text.length) {
             when {
-                // Headers
                 text.startsWith("### ", i) -> {
                     val endOfLine = text.indexOf('\n', i).let { if (it == -1) text.length else it }
-                    withStyle(SpanStyle(fontWeight = FontWeight.Bold, fontSize = 18.sp)) {
+                    withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, fontSize = 18.sp)) {
                         append(text.substring(i + 4, endOfLine))
                     }
                     append("\n")
@@ -145,7 +137,7 @@ private fun parseMarkdown(
                 }
                 text.startsWith("## ", i) -> {
                     val endOfLine = text.indexOf('\n', i).let { if (it == -1) text.length else it }
-                    withStyle(SpanStyle(fontWeight = FontWeight.Bold, fontSize = 20.sp)) {
+                    withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, fontSize = 20.sp)) {
                         append(text.substring(i + 3, endOfLine))
                     }
                     append("\n")
@@ -153,14 +145,13 @@ private fun parseMarkdown(
                 }
                 text.startsWith("# ", i) -> {
                     val endOfLine = text.indexOf('\n', i).let { if (it == -1) text.length else it }
-                    withStyle(SpanStyle(fontWeight = FontWeight.Bold, fontSize = 24.sp)) {
+                    withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, fontSize = 24.sp)) {
                         append(text.substring(i + 2, endOfLine))
                     }
                     append("\n")
                     i = endOfLine + 1
                 }
                 
-                // Code block
                 text.startsWith("```", i) -> {
                     val endOfFirstLine = text.indexOf('\n', i)
                     val codeBlockEnd = text.indexOf("```", endOfFirstLine + 1)
@@ -175,7 +166,6 @@ private fun parseMarkdown(
                         }
                         append("\n")
                         i = codeBlockEnd + 3
-                        // Skip trailing newline
                         if (i < text.length && text[i] == '\n') i++
                     } else {
                         append(text[i])
@@ -183,7 +173,6 @@ private fun parseMarkdown(
                     }
                 }
                 
-                // Inline code
                 text[i] == '`' && !text.startsWith("```", i) -> {
                     val endOfCode = text.indexOf('`', i + 1)
                     if (endOfCode != -1) {
@@ -201,7 +190,6 @@ private fun parseMarkdown(
                     }
                 }
                 
-                // Bold **text**
                 text.startsWith("**", i) -> {
                     val endOfBold = text.indexOf("**", i + 2)
                     if (endOfBold != -1) {
@@ -215,7 +203,6 @@ private fun parseMarkdown(
                     }
                 }
                 
-                // Bold __text__
                 text.startsWith("__", i) -> {
                     val endOfBold = text.indexOf("__", i + 2)
                     if (endOfBold != -1) {
@@ -229,7 +216,6 @@ private fun parseMarkdown(
                     }
                 }
                 
-                // Italic *text* (not bold)
                 text[i] == '*' && !text.startsWith("**", i) -> {
                     val endOfItalic = text.indexOf('*', i + 1)
                     if (endOfItalic != -1 && !text.startsWith("**", endOfItalic)) {
@@ -243,7 +229,6 @@ private fun parseMarkdown(
                     }
                 }
                 
-                // Italic _text_ (not bold)
                 text[i] == '_' && !text.startsWith("__", i) && (i == 0 || text[i-1].isWhitespace()) -> {
                     val endOfItalic = text.indexOf('_', i + 1)
                     if (endOfItalic != -1 && !text.startsWith("__", endOfItalic)) {
@@ -257,14 +242,12 @@ private fun parseMarkdown(
                     }
                 }
                 
-                // Bullet points
                 (text.startsWith("- ", i) || text.startsWith("* ", i)) && 
                 (i == 0 || text[i-1] == '\n') -> {
                     append("  •  ")
                     i += 2
                 }
                 
-                // Numbered lists
                 text[i].isDigit() && (i == 0 || text[i-1] == '\n') -> {
                     val dotIndex = text.indexOf(". ", i)
                     if (dotIndex != -1 && dotIndex - i <= 3) {
@@ -284,7 +267,6 @@ private fun parseMarkdown(
                     }
                 }
                 
-                // Blockquote
                 text.startsWith("> ", i) && (i == 0 || text[i-1] == '\n') -> {
                     val endOfLine = text.indexOf('\n', i).let { if (it == -1) text.length else it }
                     withStyle(SpanStyle(
@@ -298,18 +280,15 @@ private fun parseMarkdown(
                     i = endOfLine + 1
                 }
                 
-                // Horizontal rule
                 text.startsWith("---", i) && (i == 0 || text[i-1] == '\n') -> {
                     append("───────────────────────")
                     i += 3
-                    // Skip trailing newline
                     if (i < text.length && text[i] == '\n') {
                         append("\n")
                         i++
                     }
                 }
                 
-                // Regular character
                 else -> {
                     append(text[i])
                     i++

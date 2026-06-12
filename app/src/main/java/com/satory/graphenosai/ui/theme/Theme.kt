@@ -14,67 +14,69 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
 
-// Material 3 Expressive Dark Color Scheme
 private val DarkColorScheme = darkColorScheme(
     primary = AIDarkPrimary,
-    onPrimary = AIDarkSurface,
-    primaryContainer = Purple40,
-    onPrimaryContainer = Purple80,
+    onPrimary = AIDarkOnPrimary,
+    primaryContainer = AIDarkPrimaryContainer,
+    onPrimaryContainer = AIDarkOnPrimaryContainer,
     secondary = AIDarkSecondary,
-    onSecondary = AIDarkSurface,
-    secondaryContainer = PurpleGrey40,
-    onSecondaryContainer = PurpleGrey80,
+    onSecondary = AIDarkOnSecondary,
+    secondaryContainer = AIDarkSecondaryContainer,
+    onSecondaryContainer = AIDarkOnSecondaryContainer,
     tertiary = AIDarkTertiary,
-    onTertiary = AIDarkSurface,
-    tertiaryContainer = Pink40,
-    onTertiaryContainer = Pink80,
-    background = AIDarkSurface,
-    onBackground = AIDarkOnSurface,
+    onTertiary = AIDarkOnTertiary,
+    tertiaryContainer = AIDarkTertiaryContainer,
+    onTertiaryContainer = AIDarkOnTertiaryContainer,
+    background = AIDarkBackground,
+    onBackground = AIDarkOnBackground,
     surface = AIDarkSurface,
     onSurface = AIDarkOnSurface,
     surfaceVariant = AIDarkSurfaceVariant,
-    onSurfaceVariant = AIDarkOnSurface.copy(alpha = 0.8f),
+    onSurfaceVariant = AIDarkOnSurfaceVariant,
+    outline = AIDarkOutline,
     error = AIDarkError,
-    onError = AIDarkSurface
+    onError = AIDarkOnError,
+    errorContainer = AIDarkErrorContainer,
+    onErrorContainer = AIDarkOnErrorContainer
 )
 
-// Material 3 Expressive Light Color Scheme
 private val LightColorScheme = lightColorScheme(
     primary = AILightPrimary,
-    onPrimary = AILightSurface,
-    primaryContainer = Purple80,
-    onPrimaryContainer = Purple40,
+    onPrimary = AILightOnPrimary,
+    primaryContainer = AILightPrimaryContainer,
+    onPrimaryContainer = AILightOnPrimaryContainer,
     secondary = AILightSecondary,
-    onSecondary = AILightSurface,
-    secondaryContainer = PurpleGrey80,
-    onSecondaryContainer = PurpleGrey40,
+    onSecondary = AILightOnSecondary,
+    secondaryContainer = AILightSecondaryContainer,
+    onSecondaryContainer = AILightOnSecondaryContainer,
     tertiary = AILightTertiary,
-    onTertiary = AILightSurface,
-    tertiaryContainer = Pink80,
-    onTertiaryContainer = Pink40,
-    background = AILightSurface,
-    onBackground = AILightOnSurface,
+    onTertiary = AILightOnTertiary,
+    tertiaryContainer = AILightTertiaryContainer,
+    onTertiaryContainer = AILightOnTertiaryContainer,
+    background = AILightBackground,
+    onBackground = AILightOnBackground,
     surface = AILightSurface,
     onSurface = AILightOnSurface,
     surfaceVariant = AILightSurfaceVariant,
-    onSurfaceVariant = AILightOnSurface.copy(alpha = 0.8f),
+    onSurfaceVariant = AILightOnSurfaceVariant,
+    outline = AILightOutline,
     error = AILightError,
-    onError = AILightSurface
+    onError = AILightOnError,
+    errorContainer = AILightErrorContainer,
+    onErrorContainer = AILightOnErrorContainer
 )
 
-// Material 3 Expressive Shapes - more rounded for AI assistant feel
 val ExpressiveShapes = Shapes(
-    extraSmall = RoundedCornerShape(8.dp),
-    small = RoundedCornerShape(12.dp),
-    medium = RoundedCornerShape(16.dp),
-    large = RoundedCornerShape(24.dp),
-    extraLarge = RoundedCornerShape(32.dp)
+    extraSmall = RoundedCornerShape(6.dp),
+    small = RoundedCornerShape(10.dp),
+    medium = RoundedCornerShape(14.dp),
+    large = RoundedCornerShape(20.dp),
+    extraLarge = RoundedCornerShape(28.dp)
 )
 
 @Composable
 fun AiintegratedintoandroidTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    // Dynamic color is available on Android 12+
     dynamicColor: Boolean = true,
     content: @Composable () -> Unit
 ) {
@@ -83,7 +85,6 @@ fun AiintegratedintoandroidTheme(
             val context = LocalContext.current
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }
-
         darkTheme -> DarkColorScheme
         else -> LightColorScheme
     }

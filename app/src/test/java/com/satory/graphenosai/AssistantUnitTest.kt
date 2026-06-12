@@ -1,7 +1,10 @@
 package com.satory.graphenosai
 
-import com.satory.graphenosai.llm.OpenRouterClient
-import com.satory.graphenosai.search.AnonymizedSearchClient
+import com.satory.graphenosai.llm.shouldUseWebSearch
+import com.satory.graphenosai.llm.classifyRetrievalIntent
+import com.satory.graphenosai.llm.extractWeatherLocation
+import com.satory.graphenosai.llm.isWeatherQuery
+import com.satory.graphenosai.llm.RetrievalIntent
 import com.satory.graphenosai.search.SearchResult
 import com.satory.graphenosai.security.SecureKeyManager
 import io.mockk.*
@@ -59,17 +62,58 @@ class AssistantUnitTest {
 
     @Test
     fun `should search web detects search queries`() {
-        assertTrue(shouldSearchWeb("search for kotlin tutorials"))
-        assertTrue(shouldSearchWeb("what is GrapheneOS"))
-        assertTrue(shouldSearchWeb("find the latest news"))
-        assertTrue(shouldSearchWeb("look up android security"))
+        assertTrue(shouldUseWebSearch("search for kotlin tutorials"))
+        assertTrue(shouldUseWebSearch("find the latest news"))
+        assertTrue(shouldUseWebSearch("look up android security"))
+        assertTrue(shouldUseWebSearch("какие новости GrapheneOS сегодня?"))
+        assertTrue(shouldUseWebSearch("актуальная цена Pixel 10 в 2026"))
+        assertTrue(shouldUseWebSearch("какая сейчас версия Android?"))
+    }
+
+    @Test
+    fun `retrieval intent detects live data across languages`() {
+        assertEquals(RetrievalIntent.WEB_SEARCH, classifyRetrievalIntent("buscar noticias de Android hoy"))
+        assertEquals(RetrievalIntent.WEB_SEARCH, classifyRetrievalIntent("cherche les dernières nouvelles de GrapheneOS"))
+        assertEquals(RetrievalIntent.WEB_SEARCH, classifyRetrievalIntent("sprawdz aktualna cene Pixel 10"))
+        assertEquals(RetrievalIntent.WEB_SEARCH, classifyRetrievalIntent("Android security patch version 2026"))
+        assertEquals(RetrievalIntent.WEB_SEARCH, classifyRetrievalIntent("最新のOpenAIモデルは何ですか"))
+        assertEquals(RetrievalIntent.WEB_SEARCH, classifyRetrievalIntent("ابحث عن سعر البيتكوين اليوم"))
     }
 
     @Test
     fun `should search web ignores non-search queries`() {
-        assertFalse(shouldSearchWeb("tell me a joke"))
-        assertFalse(shouldSearchWeb("write a poem"))
-        assertFalse(shouldSearchWeb("calculate 2+2"))
+        assertFalse(shouldUseWebSearch("tell me a joke"))
+        assertFalse(shouldUseWebSearch("write a poem"))
+        assertFalse(shouldUseWebSearch("calculate 2+2"))
+        assertFalse(shouldUseWebSearch("объясни разницу между List и Set"))
+        assertFalse(shouldUseWebSearch("переведи hello world на русский"))
+        assertFalse(shouldUseWebSearch("write Kotlin function to sort a list"))
+    }
+
+    @Test
+    fun `weather intent detects weather queries`() {
+        assertTrue(isWeatherQuery("какая погода?"))
+        assertTrue(isWeatherQuery("погода в Варшаве"))
+        assertTrue(isWeatherQuery("weather in Berlin tomorrow"))
+        assertTrue(isWeatherQuery("will it rain today?"))
+        assertTrue(isWeatherQuery("¿qué tiempo hace en Madrid hoy?"))
+        assertTrue(isWeatherQuery("météo à Paris demain"))
+        assertTrue(isWeatherQuery("Wetter in Berlin heute"))
+        assertTrue(isWeatherQuery("czy będzie padać dzisiaj?"))
+        assertTrue(isWeatherQuery("天气 北京 今天"))
+        assertTrue(isWeatherQuery("الطقس في دبي اليوم"))
+        assertEquals(RetrievalIntent.WEATHER, classifyRetrievalIntent("pogoda w Warszawie jutro"))
+        assertFalse(isWeatherQuery("what causes a rainbow?"))
+    }
+
+    @Test
+    fun `weather location extraction handles russian and english`() {
+        assertEquals("Варшаве", extractWeatherLocation("какая погода в Варшаве?"))
+        assertEquals("Berlin", extractWeatherLocation("weather in Berlin tomorrow"))
+        assertEquals("Paris", extractWeatherLocation("météo à Paris demain"))
+        assertEquals("دبي", extractWeatherLocation("الطقس في دبي اليوم"))
+        assertEquals("北京", extractWeatherLocation("天气 北京 今天"))
+        assertNull(extractWeatherLocation("какая погода?"))
     }
 
     @Test
@@ -111,33 +155,17 @@ class AssistantUnitTest {
         return sanitized.trim()
     }
 
-    private fun shouldSearchWeb(query: String): Boolean {
-        val searchKeywords = listOf(
-            "search", "find", "look up", "what is", "who is", "when did",
-            "latest", "news", "current", "today", "recent"
-        )
-        val lowerQuery = query.lowercase()
-        return searchKeywords.any { lowerQuery.contains(it) }
-    }
-
     private fun parseSearchResults(json: String): List<SearchResult> {
         val results = mutableListOf<SearchResult>()
-        try {
-            val jsonObj = org.json.JSONObject(json)
-            val resultsArray = jsonObj.optJSONArray("results") ?: return emptyList()
-            
-            for (i in 0 until resultsArray.length()) {
-                val item = resultsArray.getJSONObject(i)
-                results.add(
-                    SearchResult(
-                        title = item.optString("title", ""),
-                        url = item.optString("url", ""),
-                        snippet = item.optString("snippet", "")
-                    )
+        val itemPattern = Regex("\\{\\s*\"title\"\\s*:\\s*\"([^\"]*)\"\\s*,\\s*\"url\"\\s*:\\s*\"([^\"]*)\"\\s*,\\s*\"snippet\"\\s*:\\s*\"([^\"]*)\"\\s*}")
+        for (match in itemPattern.findAll(json)) {
+            results.add(
+                SearchResult(
+                    title = match.groupValues[1],
+                    url = match.groupValues[2],
+                    snippet = match.groupValues[3]
                 )
-            }
-        } catch (e: Exception) {
-            // Parsing failed
+            )
         }
         return results
     }

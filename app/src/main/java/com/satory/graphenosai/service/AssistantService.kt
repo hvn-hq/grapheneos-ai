@@ -19,10 +19,16 @@ import com.satory.graphenosai.audio.WhisperTranscriber
 import com.satory.graphenosai.llm.*
 import com.satory.graphenosai.search.BraveSearchClient
 import com.satory.graphenosai.search.ExaSearchClient
+import com.satory.graphenosai.search.LangSearchClient
 import com.satory.graphenosai.search.SearchResult
+import com.satory.graphenosai.llm.buildSearchResultsMessage
+import com.satory.graphenosai.llm.containsDsmlToolCalls
+import com.satory.graphenosai.llm.extractDsmlQuery
+import com.satory.graphenosai.llm.parseDsmlToolCalls
 import com.satory.graphenosai.storage.ChatHistoryManager
 import com.satory.graphenosai.tts.TTSManager
 import com.satory.graphenosai.ui.SettingsManager
+import com.satory.graphenosai.weather.OpenMeteoClient
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import org.json.JSONArray
@@ -46,11 +52,14 @@ class AssistantService : Service() {
     lateinit var localModelManager: LocalModelManager
     private lateinit var braveSearchClient: BraveSearchClient
     private lateinit var exaSearchClient: ExaSearchClient
+    private lateinit var langSearchClient: LangSearchClient
+    private lateinit var openMeteoClient: OpenMeteoClient
     private lateinit var ttsManager: TTSManager
     lateinit var settingsManager: SettingsManager
     lateinit var chatHistoryManager: ChatHistoryManager
     
     private var speechRecognitionJob: Job? = null
+    private var activeResponseJob: Job? = null
 
     // State flow for UI binding
     private val _assistantState = MutableStateFlow<AssistantState>(AssistantState.Idle)
@@ -192,6 +201,8 @@ class AssistantService : Service() {
         
         braveSearchClient = BraveSearchClient(app.secureKeyManager)
         exaSearchClient = ExaSearchClient(app.secureKeyManager)
+        langSearchClient = LangSearchClient(app.secureKeyManager)
+        openMeteoClient = OpenMeteoClient()
         ttsManager = TTSManager(this)
         
         // Initialize Vosk with selected language (and secondary for multilingual)
@@ -561,6 +572,7 @@ class AssistantService : Service() {
             if (imageBase64 != null) "Describe this image" else return // Can't process empty query without image
         }
         
+        stopResponse()
         _assistantState.value = AssistantState.Processing
         
         Log.i(TAG, "Processing query: '$effectiveQuery', hasImage=${imageBase64 != null}, imageLength=${imageBase64?.length}")
@@ -568,7 +580,7 @@ class AssistantService : Service() {
         // Immediately add user message to chat UI
         addUserMessageToChat(effectiveQuery, imageBase64)
         
-        serviceScope.launch(Dispatchers.IO) {
+        activeResponseJob = serviceScope.launch(Dispatchers.IO) {
             processQueryInternal(effectiveQuery, imageBase64)
         }
     }
@@ -597,6 +609,7 @@ class AssistantService : Service() {
      * Called from voice capture paths.
      */
     private suspend fun processVoiceQuery(query: String) {
+        stopResponse()
         // Add user message to chat (on main thread for UI update)
         withContext(Dispatchers.Main) {
             addUserMessageToChat(query, null)
@@ -616,11 +629,29 @@ class AssistantService : Service() {
             val sanitizedQuery = sanitizeQuery(query)
             val isLocal = settingsManager.apiProvider == SettingsManager.PROVIDER_LOCAL
 
-            if (_webSearchEnabled.value && imageBase64 == null && !isLocal && isSearchConfigured()) {
-                processWithFunctionCalling(imageBase64)
+            if (_webSearchEnabled.value && imageBase64 == null && !isLocal) {
+                when (classifyRetrievalIntent(sanitizedQuery)) {
+                    RetrievalIntent.WEATHER -> processWithWeather(sanitizedQuery)
+                    RetrievalIntent.WEB_SEARCH -> {
+                        if (isSearchConfigured()) {
+                            processWithDirectSearch(sanitizedQuery)
+                        } else {
+                            showSearchNotConfigured()
+                        }
+                    }
+                    RetrievalIntent.NONE -> if (isSearchConfigured()) {
+                        processWithFunctionCalling(imageBase64)
+                    } else {
+                        streamDirect(sanitizedQuery, imageBase64)
+                    }
+                }
             } else {
                 streamDirect(sanitizedQuery, imageBase64)
             }
+        } catch (e: CancellationException) {
+            Log.i(TAG, "Query processing cancelled")
+            _assistantState.value = AssistantState.Idle
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Query processing error", e)
             _assistantState.value = AssistantState.Error(e.message ?: "Processing failed")
@@ -629,12 +660,96 @@ class AssistantService : Service() {
 
     private fun isSearchConfigured(): Boolean = when (settingsManager.searchEngine) {
         SettingsManager.SEARCH_EXA -> exaSearchClient.isConfigured()
+        SettingsManager.SEARCH_LANGSEARCH -> langSearchClient.isConfigured()
         else -> braveSearchClient.isConfigured()
+    }
+
+    private fun showSearchNotConfigured() {
+        val providerName = when (settingsManager.searchEngine) {
+            SettingsManager.SEARCH_EXA -> "Exa"
+            SettingsManager.SEARCH_LANGSEARCH -> "LangSearch"
+            else -> "Brave Search"
+        }
+        _response.value = "Web search is enabled, but $providerName is not configured. Add its API key in Settings → Web Search, or switch to a configured search engine."
+        _assistantState.value = AssistantState.Error("Web search is not configured")
+    }
+
+    private fun shouldFallbackToSearch(response: String): Boolean {
+        val lower = response.lowercase()
+        val noAccessPhrases = listOf(
+            "don't have access to the internet",
+            "do not have access to the internet",
+            "don't have web access",
+            "do not have web access",
+            "can't browse the web",
+            "cannot browse the web",
+            "не имею доступа к интернету",
+            "нет доступа к интернету",
+            "не могу искать в интернете",
+            "не могу просматривать интернет",
+            "нет доступа к веб"
+        )
+        return noAccessPhrases.any { lower.contains(it) }
     }
 
     /**
      * Function calling flow: model decides via web_search tool whether to search.
      */
+    private suspend fun processWithWeather(query: String) {
+        _assistantState.value = AssistantState.Searching
+        _response.value = ""
+
+        val location = extractWeatherLocation(query)
+        val weatherReport = openMeteoClient.getWeather(location)
+        if (weatherReport == null) {
+            _response.value = "I couldn't resolve the weather location. Please ask with a city name, for example: \"погода в Варшаве\"."
+            _assistantState.value = AssistantState.Error("Weather location not found")
+            return
+        }
+
+        val fullResponse = StringBuilder()
+        val enhancedQuery = buildWeatherEnhancedQuery(query, weatherReport.toPromptContext())
+
+        _assistantState.value = AssistantState.Responding
+        openRouterClient.streamCompletionWithSearch(enhancedQuery, null)
+            .catch { e ->
+                Log.e(TAG, "Weather response streaming error", e)
+                _response.value = "Error: ${e.message}"
+                _assistantState.value = AssistantState.Error(e.message ?: "LLM error")
+            }
+            .collect { chunk ->
+                fullResponse.append(chunk)
+                _response.value = fullResponse.toString()
+            }
+
+        finalizeResponse(fullResponse.toString(), listOf("https://open-meteo.com/"))
+    }
+
+    private suspend fun processWithDirectSearch(query: String) {
+        _assistantState.value = AssistantState.Searching
+        _response.value = ""
+
+        val searchResults = executeSearch(query)
+        val contextSources = searchResults.map { it.url }
+        val enhancedQuery = buildSearchEnhancedQuery(query, searchResults)
+        val fullResponse = StringBuilder()
+
+        _assistantState.value = AssistantState.Responding
+
+        openRouterClient.streamCompletionWithSearch(enhancedQuery, null)
+            .catch { e ->
+                Log.e(TAG, "Direct search streaming error", e)
+                _response.value = "Error: ${e.message}"
+                _assistantState.value = AssistantState.Error(e.message ?: "LLM error")
+            }
+            .collect { chunk ->
+                fullResponse.append(chunk)
+                _response.value = fullResponse.toString()
+            }
+
+        finalizeResponse(fullResponse.toString(), contextSources)
+    }
+
     private suspend fun processWithFunctionCalling(imageBase64: String? = null) {
         _assistantState.value = AssistantState.Responding
         _response.value = ""
@@ -683,7 +798,7 @@ class AssistantService : Service() {
 
             _assistantState.value = AssistantState.Responding
 
-            openRouterClient.streamWithMessages(followUpMessages, tools)
+            openRouterClient.streamWithMessages(followUpMessages, null)
                 .catch { e ->
                     Log.e(TAG, "Follow-up streaming error", e)
                     _response.value = "Error: ${e.message}"
@@ -698,6 +813,69 @@ class AssistantService : Service() {
             }
         }
 
+        // Phase 2b: DSML-style tool calls detected in content — parse and execute
+        if (detectedCalls == null && containsDsmlToolCalls(fullResponse.toString())) {
+            val rawText = fullResponse.toString()
+            Log.d(TAG, "DSML detected, raw='${rawText.take(300)}'")
+            val (dsmlCalls, cleanedText) = parseDsmlToolCalls(rawText)
+            Log.d(TAG, "DSML parsed: ${dsmlCalls.size} call(s), cleaned='${cleanedText.take(200)}'")
+            if (dsmlCalls.isNotEmpty()) {
+                fullResponse.clear()
+                fullResponse.append(cleanedText)
+                _response.value = cleanedText
+
+                _assistantState.value = AssistantState.Searching
+                Log.i(TAG, "DSML tool call detected: ${dsmlCalls.size} call(s)")
+
+                val searchResults = executeSearchFromToolCalls(dsmlCalls)
+                if (searchResults.isNotEmpty()) {
+                    contextSources = searchResults.map { it.url }
+                }
+
+                val resultsText = buildSearchResultsMessage(searchResults)
+                val followUpMessages = openRouterClient.chatSession.getMessagesForApi(
+                    settingsManager.systemPrompt, false
+                )
+                // Add previous assistant response (with DSML stripped) and search results
+                val userMsg = JSONObject().apply {
+                    put("role", "user")
+                    put("content", if (cleanedText.isNotBlank()) {
+                        "$cleanedText\n\nSearch results:\n$resultsText"
+                    } else {
+                        "Web search results:\n$resultsText"
+                    })
+                }
+                followUpMessages.put(userMsg)
+
+                _assistantState.value = AssistantState.Responding
+                openRouterClient.streamWithMessages(followUpMessages, null)
+                    .catch { e ->
+                        Log.e(TAG, "DSML follow-up streaming error", e)
+                        _response.value = "Error: ${e.message}"
+                    }
+                    .collect { chunk ->
+                        fullResponse.append(chunk)
+                        _response.value = fullResponse.toString()
+                    }
+
+                if (fullResponse.isNotEmpty()) {
+                    openRouterClient.chatSession.addAssistantMessage(fullResponse.toString())
+                }
+            }
+        }
+
+        if (detectedCalls == null && contextSources.isEmpty() && shouldFallbackToSearch(fullResponse.toString())) {
+            val originalQuery = openRouterClient.chatSession.getAllMessages()
+                .lastOrNull { it.role == "user" }
+                ?.content
+                .orEmpty()
+            if (originalQuery.isNotBlank()) {
+                Log.i(TAG, "Model claimed no web access; falling back to direct search")
+                processWithDirectSearch(originalQuery)
+                return
+            }
+        }
+
         // Phase 3: Finalize — sources, URL detection, TTS
         finalizeResponse(fullResponse.toString(), contextSources)
     }
@@ -709,16 +887,19 @@ class AssistantService : Service() {
                 val searchQuery = parseSearchQuery(tc.function.arguments)
                 if (searchQuery.isNotBlank()) {
                     Log.i(TAG, "Executing web search: '$searchQuery'")
-                    val searchResults = when (settingsManager.searchEngine) {
-                        SettingsManager.SEARCH_EXA -> exaSearchClient.search(searchQuery)
-                        else -> braveSearchClient.search(searchQuery)
-                    }
+                    val searchResults = executeSearch(searchQuery)
                     Log.i(TAG, "Search returned ${searchResults.size} results")
                     results.addAll(searchResults)
                 }
             }
         }
         return results
+    }
+
+    private suspend fun executeSearch(query: String): List<SearchResult> = when (settingsManager.searchEngine) {
+        SettingsManager.SEARCH_EXA -> exaSearchClient.search(query)
+        SettingsManager.SEARCH_LANGSEARCH -> langSearchClient.search(query)
+        else -> braveSearchClient.search(query)
     }
 
     private fun buildToolFollowUpMessages(
@@ -781,6 +962,10 @@ class AssistantService : Service() {
                 }
 
             finalizeResponse(fullResponse.toString(), emptyList())
+        } catch (e: CancellationException) {
+            Log.i(TAG, "Direct streaming cancelled")
+            _assistantState.value = AssistantState.Idle
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Error in streamDirect", e)
             _response.value = "Error: ${e.message}"
@@ -793,23 +978,35 @@ class AssistantService : Service() {
      */
     private suspend fun finalizeResponse(
         responseText: String,
-        sources: List<String>
+        sources: List<String>,
+        isDsmlRetry: Boolean = false
     ) {
-        if (responseText.isEmpty()) {
-            _response.value = "No response. Check your API key."
+        // If response contains DSML-style tool call tags and we haven't retried yet, handle
+        val hasDsml = !isDsmlRetry && responseText.contains("<|") && responseText.contains("DSML", ignoreCase = true)
+        if (hasDsml) {
+            Log.d(TAG, "DSML detected in response, handling search follow-up")
+            handleDsmlResponse(responseText)
+            return
+        }
+
+        // Strip any remaining DSML/XML-like tags
+        val cleaned = responseText.replace(Regex("<\\|[^>]*>"), "").trim()
+
+        if (cleaned.isEmpty()) {
+            _response.value = "No response from LLM. Check your OpenRouter API key and internet connection."
             _assistantState.value = AssistantState.Error("Empty response")
             return
         }
 
         val useLocal = settingsManager.apiProvider == SettingsManager.PROVIDER_LOCAL
+        _response.value = cleaned
 
         // Append sources if web search was used
         if (sources.isNotEmpty() && !useLocal) {
             val sourcesText = "\n\n📚 Sources:\n" + sources.take(3).mapIndexed { i, url ->
                 "${i + 1}. $url"
             }.joinToString("\n")
-            val finalText = responseText + sourcesText
-            _response.value = finalText
+            _response.value = cleaned + sourcesText
         }
 
         // Update chat messages for UI
@@ -822,7 +1019,7 @@ class AssistantService : Service() {
 
         // URL detection
         if (!useLocal) {
-            val urlsToOpen = detectUrlsToOpen(responseText)
+            val urlsToOpen = detectUrlsToOpen(cleaned)
             if (urlsToOpen.isNotEmpty()) {
                 _pendingUrls.value = urlsToOpen
                 Log.i(TAG, "Detected ${urlsToOpen.size} URLs for user approval")
@@ -832,12 +1029,86 @@ class AssistantService : Service() {
         // TTS
         if (settingsManager.ttsEnabled) {
             _assistantState.value = AssistantState.Speaking
-            ttsManager.speak(responseText)
+            ttsManager.speak(cleaned)
         }
 
         _assistantState.value = AssistantState.Complete
     }
-    
+
+    /**
+     * Handle a response that contains DSML-style tool call tags.
+     * Extracts the search query, executes the search, and streams a follow-up.
+     */
+    private suspend fun handleDsmlResponse(rawText: String) {
+        Log.d(TAG, "Handling DSML response: '${rawText.take(200)}'")
+
+        // Extract query using simple string search
+        val query = extractDsmlQuery(rawText)
+
+        // Extract function name — look for name="web_search" after "invoke"
+        val invokeIdx = rawText.indexOf("invoke", ignoreCase = true)
+        val funcName = if (invokeIdx >= 0) {
+            val afterInvoke = rawText.substring(invokeIdx)
+            val nameIdx = afterInvoke.indexOf("name=\"", ignoreCase = true)
+            if (nameIdx >= 0) {
+                val start = nameIdx + 6
+                val end = afterInvoke.indexOf("\"", start)
+                if (end >= 0) afterInvoke.substring(start, end) else ""
+            } else ""
+        } else ""
+
+        if (query.isNotEmpty() && (funcName.isEmpty() || funcName == "web_search")) {
+            Log.i(TAG, "DSML search query: '$query'")
+
+            _assistantState.value = AssistantState.Searching
+
+            val toolCalls = listOf(ToolCall(
+                id = "dsml_0",
+                type = "function",
+                function = ToolFunctionCall("web_search", JSONObject().apply {
+                    put("query", query)
+                }.toString())
+            ))
+
+            val searchResults = executeSearchFromToolCalls(toolCalls)
+            val contextSources = searchResults.map { it.url }
+
+            val resultsText = buildSearchResultsMessage(searchResults)
+            val followUpMessages = openRouterClient.chatSession.getMessagesForApi(
+                settingsManager.systemPrompt, false
+            )
+            followUpMessages.put(JSONObject().apply {
+                put("role", "user")
+                put("content", "Web search results for '$query':\n$resultsText")
+            })
+
+            _assistantState.value = AssistantState.Responding
+            val responseBuilder = StringBuilder()
+
+            openRouterClient.streamWithMessages(followUpMessages, null)
+                .catch { e ->
+                    Log.e(TAG, "DSML follow-up error", e)
+                    _response.value = "Error: ${e.message}"
+                }
+                .collect { chunk ->
+                    responseBuilder.append(chunk)
+                    _response.value = responseBuilder.toString()
+                }
+
+            val finalText = responseBuilder.toString()
+            if (finalText.isNotEmpty()) {
+                openRouterClient.chatSession.addAssistantMessage(finalText)
+            }
+
+            // Finalize with sources (pass retry guard to prevent infinite loop)
+            finalizeResponse(finalText, contextSources, isDsmlRetry = true)
+        } else {
+            // Can't parse DSML or not a search call — just show empty state
+            _response.value = ""
+            _assistantState.value = AssistantState.Idle
+        }
+    }
+
     /**
      * Clear chat session and start fresh.
      * Saves current chat to history if it has messages.
@@ -1036,7 +1307,7 @@ class AssistantService : Service() {
     }
 
     fun cancelOperation() {
-        serviceScope.coroutineContext.cancelChildren()
+        stopResponse()
         speechRecognitionJob?.cancel()
         speechRecognizerManager.stopListening()
         audioCaptureManager.cancelCapture()
@@ -1044,6 +1315,35 @@ class AssistantService : Service() {
         // Also stop local generation if running
         llamaCppClient.stopGeneration()
         _assistantState.value = AssistantState.Idle
+    }
+
+    fun stopResponse() {
+        val wasActive = _assistantState.value is AssistantState.Processing ||
+            _assistantState.value is AssistantState.Searching ||
+            _assistantState.value is AssistantState.Responding ||
+            _assistantState.value is AssistantState.Speaking
+
+        activeResponseJob?.cancel()
+        activeResponseJob = null
+        ttsManager.stop()
+        llamaCppClient.stopGeneration()
+
+        val hadPartialResponse = wasActive && _response.value.isNotBlank()
+        if (hadPartialResponse) {
+            val partial = _response.value.trim() + "\n\n[Stopped]"
+            if (settingsManager.apiProvider == SettingsManager.PROVIDER_LOCAL) {
+                llamaCppClient.chatSession.addAssistantMessage(partial)
+                _chatMessages.value = llamaCppClient.chatSession.getAllMessages()
+            } else {
+                openRouterClient.chatSession.addAssistantMessage(partial)
+                _chatMessages.value = openRouterClient.chatSession.getAllMessages()
+            }
+            _response.value = ""
+        }
+
+        if (wasActive) {
+            _assistantState.value = if (hadPartialResponse) AssistantState.Complete else AssistantState.Idle
+        }
     }
 }
 

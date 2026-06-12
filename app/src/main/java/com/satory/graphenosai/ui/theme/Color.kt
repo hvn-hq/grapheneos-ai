@@ -2,8 +2,6 @@ package com.satory.graphenosai.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Material 3 Expressive Color Palette
-// Primary: Deep vibrant purple for AI assistant branding
 val Purple80 = Color(0xFFD0BCFF)
 val PurpleGrey80 = Color(0xFFCCC2DC)
 val Pink80 = Color(0xFFEFB8C8)
@@ -12,32 +10,63 @@ val Purple40 = Color(0xFF6650a4)
 val PurpleGrey40 = Color(0xFF625b71)
 val Pink40 = Color(0xFF7D5260)
 
-// Expressive accent colors for AI states
-val AIPrimary = Color(0xFF6750A4)  // Main purple
-val AISecondary = Color(0xFF958DA5)  // Secondary purple-grey
-val AITertiary = Color(0xFF7D5260)  // Accent pink
+val AIPrimary = Color(0xFF6750A4)
+val AISecondary = Color(0xFF958DA5)
+val AITertiary = Color(0xFF7D5260)
 
-// Light theme expressive colors
-val AILightPrimary = Color(0xFF7C5DFA)  // Vibrant purple
-val AILightSecondary = Color(0xFF5C6BC0)  // Indigo accent
-val AILightTertiary = Color(0xFFFF7043)  // Warm accent for voice
-val AILightSurface = Color(0xFFFBF8FF)  // Slightly purple tinted surface
-val AILightSurfaceVariant = Color(0xFFE7E0EC)  // Light purple surface variant
-val AILightOnSurface = Color(0xFF1C1B1F)
+val AILightPrimary = Color(0xFF006A6A)
+val AILightOnPrimary = Color(0xFFFFFFFF)
+val AILightPrimaryContainer = Color(0xFF9CF1F0)
+val AILightOnPrimaryContainer = Color(0xFF002020)
+val AILightSecondary = Color(0xFF4A6363)
+val AILightOnSecondary = Color(0xFFFFFFFF)
+val AILightSecondaryContainer = Color(0xFFCCE8E7)
+val AILightOnSecondaryContainer = Color(0xFF051F1F)
+val AILightTertiary = Color(0xFF5B5B7E)
+val AILightOnTertiary = Color(0xFFFFFFFF)
+val AILightTertiaryContainer = Color(0xFFE2DFFF)
+val AILightOnTertiaryContainer = Color(0xFF181837)
+val AILightBackground = Color(0xFFFAFDFC)
+val AILightOnBackground = Color(0xFF191C1C)
+val AILightSurface = Color(0xFFFAFDFC)
+val AILightOnSurface = Color(0xFF191C1C)
+val AILightSurfaceVariant = Color(0xFFDAE5E4)
+val AILightOnSurfaceVariant = Color(0xFF3F4948)
+val AILightOutline = Color(0xFF6F7978)
 val AILightError = Color(0xFFB3261E)
+val AILightOnError = Color(0xFFFFFFFF)
+val AILightErrorContainer = Color(0xFFF9DEDC)
+val AILightOnErrorContainer = Color(0xFF601410)
 
-// Dark theme expressive colors
-val AIDarkPrimary = Color(0xFFCFBCFF)  // Bright purple
-val AIDarkSecondary = Color(0xFF9FA8DA)  // Light indigo accent
-val AIDarkTertiary = Color(0xFFFFAB91)  // Warm accent for voice
-val AIDarkSurface = Color(0xFF1C1B1F)  // Deep surface
-val AIDarkSurfaceVariant = Color(0xFF49454F)  // Dark purple surface variant
-val AIDarkOnSurface = Color(0xFFE6E1E5)
+val AIDarkPrimary = Color(0xFF80D5D4)
+val AIDarkOnPrimary = Color(0xFF003737)
+val AIDarkPrimaryContainer = Color(0xFF004F4F)
+val AIDarkOnPrimaryContainer = Color(0xFF9CF1F0)
+val AIDarkSecondary = Color(0xFFB0CCCB)
+val AIDarkOnSecondary = Color(0xFF1C3534)
+val AIDarkSecondaryContainer = Color(0xFF334B4B)
+val AIDarkOnSecondaryContainer = Color(0xFFCCE8E7)
+val AIDarkTertiary = Color(0xFFC4C3EA)
+val AIDarkOnTertiary = Color(0xFF2D2D4D)
+val AIDarkTertiaryContainer = Color(0xFF444465)
+val AIDarkOnTertiaryContainer = Color(0xFFE2DFFF)
+val AIDarkBackground = Color(0xFF101414)
+val AIDarkOnBackground = Color(0xFFE0E3E2)
+val AIDarkSurface = Color(0xFF101414)
+val AIDarkOnSurface = Color(0xFFE0E3E2)
+val AIDarkSurfaceVariant = Color(0xFF3F4948)
+val AIDarkOnSurfaceVariant = Color(0xFFBEC9C8)
+val AIDarkOutline = Color(0xFF899392)
 val AIDarkError = Color(0xFFF2B8B5)
+val AIDarkOnError = Color(0xFF601410)
+val AIDarkErrorContainer = Color(0xFF8C1D18)
+val AIDarkOnErrorContainer = Color(0xFFF9DEDC)
 
-// AI State specific colors
-val ListeningColor = Color(0xFFFF5252)  // Recording red
-val ProcessingColor = Color(0xFFFFB74D)  // Thinking orange
-val SearchingColor = Color(0xFF7C4DFF)  // Searching purple
-val RespondingColor = Color(0xFF4DD0E1)  // Responding cyan
-val SuccessColor = Color(0xFF4CAF50)  // Success green
+val ListeningColor = Color(0xFFFF5252)
+val ProcessingColor = Color(0xFFFFB74D)
+val SearchingColor = Color(0xFF00ACC1)
+val RespondingColor = Color(0xFF4DD0E1)
+val SuccessColor = Color(0xFF4CAF50)
+
+val NavigationBarContainer = Color(0xFFFEF7FF)
+val NavigationBarContainerDark = Color(0xFF1D1B20)

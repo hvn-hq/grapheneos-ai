@@ -39,33 +39,41 @@ class SettingsManager(context: Context) {
         // Search Engines
         const val SEARCH_BRAVE = "brave"
         const val SEARCH_EXA = "exa"
+        const val SEARCH_LANGSEARCH = "langsearch"
         
         // Local model settings
         private const val KEY_LOCAL_MODEL_ID = "local_model_id"
         const val DEFAULT_LOCAL_MODEL = "qwen3-4b"
         
         val AVAILABLE_MODELS = listOf(
-            ModelInfo("openai/gpt-4o-mini", "GPT-4o Mini", "Fast, vision", true),
-            ModelInfo("openai/gpt-4o", "GPT-4o", "Most capable, vision", true),
-            ModelInfo("anthropic/claude-3-haiku", "Claude 3 Haiku", "Fast, vision", true),
-            ModelInfo("anthropic/claude-3.5-sonnet", "Claude 3.5 Sonnet", "Best for coding, vision", true),
-            ModelInfo("anthropic/claude-sonnet-4", "Claude Sonnet 4", "Latest Claude, vision", true),
-            ModelInfo("google/gemini-flash-1.5", "Gemini Flash 1.5", "Fast, multimodal", true),
-            ModelInfo("google/gemini-pro-1.5", "Gemini Pro 1.5", "Advanced", true),
-            ModelInfo("google/gemini-2.0-flash-001", "Gemini 2.0 Flash", "Latest Google", true),
-            ModelInfo("meta-llama/llama-3.1-70b-instruct", "Llama 3.1 70B", "Open source", false),
-            ModelInfo("meta-llama/llama-3.1-8b-instruct", "Llama 3.1 8B", "Fast, open source", false),
-            ModelInfo("mistralai/mistral-large", "Mistral Large", "European AI", false),
-            ModelInfo("deepseek/deepseek-chat", "DeepSeek Chat", "Chinese AI", false),
-            ModelInfo("deepseek/deepseek-r1", "DeepSeek R1", "Reasoning model", false),
-            ModelInfo("qwen/qwen-2.5-72b-instruct", "Qwen 2.5 72B", "Alibaba", false),
+            ModelInfo("openai/gpt-5.5", "GPT-5.5", "Latest OpenAI flagship, vision", true),
+            ModelInfo("openai/gpt-5.4-mini", "GPT-5.4 Mini", "Fast OpenAI, vision", true),
+            ModelInfo("openai/gpt-chat-latest", "GPT Chat Latest", "OpenAI chat alias, vision", true),
+            ModelInfo("anthropic/claude-opus-4.8", "Claude Opus 4.8", "Top Claude, vision", true),
+            ModelInfo("anthropic/claude-sonnet-4.6", "Claude Sonnet 4.6", "Balanced Claude, vision", true),
+            ModelInfo("anthropic/claude-haiku-4.5", "Claude Haiku 4.5", "Fast Claude, vision", true),
+            ModelInfo("google/gemini-3.5-flash", "Gemini 3.5 Flash", "Fast multimodal", true),
+            ModelInfo("google/gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview", "Advanced multimodal", true),
+            ModelInfo("mistralai/mistral-large-2512", "Mistral Large 3", "European flagship, vision", true),
+            ModelInfo("mistralai/mistral-medium-3-5", "Mistral Medium 3.5", "Efficient multimodal", true),
+            ModelInfo("deepseek/deepseek-v4-pro", "DeepSeek V4 Pro", "Reasoning and coding", false),
+            ModelInfo("deepseek/deepseek-v4-flash", "DeepSeek V4 Flash", "Fast reasoning", false),
+            ModelInfo("qwen/qwen3.7-max", "Qwen3.7 Max", "Agentic long context", false),
+            ModelInfo("qwen/qwen3.7-plus", "Qwen3.7 Plus", "Cost-effective, vision", true),
+            ModelInfo("meta-llama/llama-4-maverick", "Llama 4 Maverick", "Open model, vision", true),
+            ModelInfo("meta-llama/llama-4-scout", "Llama 4 Scout", "Long-context open model, vision", true),
             // Free models
-            ModelInfo("deepseek/deepseek-v4-flash:free", "DeepSeek V4 Flash (Free)", "Free tier", false),
-            ModelInfo("mistralai/devstral-2512:free", "Devstral (Free)", "Free tier", false),
+            ModelInfo("nex-agi/nex-n2-pro:free", "Nex N2 Pro (Free)", "Free multimodal", true),
+            ModelInfo("nvidia/nemotron-3-ultra-550b-a55b:free", "Nemotron 3 Ultra (Free)", "Free reasoning", false),
+            ModelInfo("qwen/qwen3-next-80b-a3b-instruct:free", "Qwen3 Next 80B (Free)", "Free open model", false),
+            ModelInfo("openai/gpt-oss-120b:free", "GPT-OSS 120B (Free)", "Free open-weight", false),
+            ModelInfo("openai/gpt-oss-20b:free", "GPT-OSS 20B (Free)", "Fast free open-weight", false),
+            ModelInfo("qwen/qwen3-coder:free", "Qwen3 Coder (Free)", "Free coding model", false),
+            ModelInfo("meta-llama/llama-3.3-70b-instruct:free", "Llama 3.3 70B (Free)", "Free open model", false),
             ModelInfo("meta-llama/llama-3.2-3b-instruct:free", "Llama 3.2 3B (Free)", "Free tier", false),
         )
         
-        const val DEFAULT_MODEL = "openai/gpt-4o-mini"
+        const val DEFAULT_MODEL = "openai/gpt-5.4-mini"
         const val DEFAULT_LANGUAGE = "en"
         
         val DEFAULT_SYSTEM_PROMPT = """You are a helpful AI assistant on GrapheneOS (privacy-focused mobile OS).
@@ -75,7 +83,7 @@ class SettingsManager(context: Context) {
 - Include URLs when citing sources
 - To open a link, write: [OPEN_URL:https://example.com] (only when explicitly asked)
 - You can analyze screenshots and PDF documents when shared
-- You have access to current web information when I search for you
+- When web search is enabled, you can use current web information. Do not claim you lack internet access; use search context or request web_search for current facts.
 - If unsure, say so honestly
 - Respond in the same language as the user"""
     }

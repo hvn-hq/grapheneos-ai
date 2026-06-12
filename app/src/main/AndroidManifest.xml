@@ -9,11 +9,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
-    
+
     <!-- Required for accessibility service activation -->
     <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE"
         tools:ignore="ProtectedPermissions" />
-    
+
     <!-- Scoped storage - no broad storage permissions needed -->
     <!-- Uses app-specific directories only -->
 
@@ -42,13 +42,13 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            
+
             <!-- Voice assistant intent (alternative activation) -->
             <intent-filter>
                 <action android:name="android.intent.action.VOICE_COMMAND" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
-            
+
             <!-- Assist intent - triggered by long-press home or assistant gesture -->
             <intent-filter>
                 <action android:name="android.intent.action.ASSIST" />
@@ -64,6 +64,7 @@
             android:launchMode="singleTask"
             android:taskAffinity=""
             android:theme="@style/Theme.Assistant.Overlay"
+            android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|screenSize|keyboardHidden" />
 
         <!-- Foreground service for assistant processing -->

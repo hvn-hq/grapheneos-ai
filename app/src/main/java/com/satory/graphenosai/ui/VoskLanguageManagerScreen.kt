@@ -4,6 +4,7 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
@@ -12,7 +13,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.satory.graphenosai.audio.VoskTranscriber
@@ -29,66 +29,57 @@ fun VoskLanguageManagerScreen(
     val voskTranscriber = remember { VoskTranscriber(context) }
     val settingsManager = remember { SettingsManager(context) }
     val scope = rememberCoroutineScope()
-    
+
     var downloadedLanguages by remember { mutableStateOf(voskTranscriber.getDownloadedLanguages()) }
     var downloadingLanguage by remember { mutableStateOf<String?>(null) }
     var downloadProgress by remember { mutableStateOf(0) }
     var isExtracting by remember { mutableStateOf(false) }
     var downloadError by remember { mutableStateOf<String?>(null) }
     var showDeleteDialog by remember { mutableStateOf<String?>(null) }
-    
-    // Calculate total downloaded size
+
     val totalDownloadedSize = remember(downloadedLanguages) {
         downloadedLanguages.sumOf { voskTranscriber.getModelSize(it) }
     }
-    
-    // Group languages by base code
+
     val languageGroups = remember {
-        VoskTranscriber.AVAILABLE_LANGUAGES.groupBy { 
-            VoskTranscriber.getBaseLanguageCode(it.code) 
+        VoskTranscriber.AVAILABLE_LANGUAGES.groupBy {
+            VoskTranscriber.getBaseLanguageCode(it.code)
         }
     }
-    
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { 
-                    Column {
-                        Text("Voice Languages")
-                        Text(
-                            "${downloadedLanguages.size} downloaded • ${formatSize(totalDownloadedSize)}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        TopAppBar(
+            title = {
+                Column {
+                    Text("Voice Languages")
+                    Text("${downloadedLanguages.size} downloaded • ${formatSize(totalDownloadedSize)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+            },
+            navigationIcon = {
+                IconButton(onClick = onNavigateBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+                }
+            },
+            colors = TopAppBarDefaults.topAppBarColors(
+                containerColor = MaterialTheme.colorScheme.surface
             )
-        }
-    ) { padding ->
+        )
+
         LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
+            modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Downloaded models section
             if (downloadedLanguages.isNotEmpty()) {
                 item {
-                    Text(
-                        "Downloaded Models",
+                    Text("Downloaded Models",
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(vertical = 8.dp)
-                    )
+                        modifier = Modifier.padding(vertical = 8.dp))
                 }
-                
+
                 items(
                     VoskTranscriber.AVAILABLE_LANGUAGES.filter { it.code in downloadedLanguages },
                     key = { "downloaded_${it.code}" }
@@ -109,22 +100,17 @@ fun VoskLanguageManagerScreen(
                         }
                     )
                 }
-                
+
                 item { Spacer(modifier = Modifier.height(16.dp)) }
             }
-            
-            // Available for download section
+
             item {
-                Text(
-                    "Available for Download",
+                Text("Available for Download",
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(vertical = 8.dp)
-                )
+                    modifier = Modifier.padding(vertical = 8.dp))
             }
-            
-            // Group by language family
+
             languageGroups.forEach { (_, languages) ->
                 items(
                     languages.filter { it.code !in downloadedLanguages },
@@ -141,7 +127,7 @@ fun VoskLanguageManagerScreen(
                             downloadError = null
                             downloadProgress = 0
                             isExtracting = false
-                            
+
                             scope.launch {
                                 voskTranscriber.downloadModel(language.code).collect { state ->
                                     when (state) {
@@ -175,15 +161,14 @@ fun VoskLanguageManagerScreen(
             }
         }
     }
-    
-    // Delete confirmation dialog
+
     showDeleteDialog?.let { langCode ->
         val language = VoskTranscriber.getLanguageByCode(langCode)
         AlertDialog(
             onDismissRequest = { showDeleteDialog = null },
             icon = { Icon(Icons.Default.Delete, contentDescription = null) },
             title = { Text("Delete ${language.displayName}?") },
-            text = { 
+            text = {
                 Text("This will free up ${formatSize(voskTranscriber.getModelSize(langCode))} of storage. You can re-download it later.")
             },
             confirmButton = {
@@ -196,14 +181,10 @@ fun VoskLanguageManagerScreen(
                     colors = ButtonDefaults.textButtonColors(
                         contentColor = MaterialTheme.colorScheme.error
                     )
-                ) {
-                    Text("Delete")
-                }
+                ) { Text("Delete") }
             },
             dismissButton = {
-                TextButton(onClick = { showDeleteDialog = null }) {
-                    Text("Cancel")
-                }
+                TextButton(onClick = { showDeleteDialog = null }) { Text("Cancel") }
             }
         )
     }
@@ -219,20 +200,18 @@ fun DownloadedLanguageCard(
     onSetPrimary: () -> Unit,
     onSetSecondary: () -> Unit
 ) {
-    Card(
+    Surface(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = when {
-                isPrimary -> MaterialTheme.colorScheme.primaryContainer
-                isSecondary -> MaterialTheme.colorScheme.secondaryContainer
-                else -> MaterialTheme.colorScheme.surfaceVariant
-            }
-        )
+        shape = RoundedCornerShape(16.dp),
+        tonalElevation = 2.dp,
+        color = when {
+            isPrimary -> MaterialTheme.colorScheme.primaryContainer
+            isSecondary -> MaterialTheme.colorScheme.secondaryContainer
+            else -> MaterialTheme.colorScheme.surfaceVariant
+        }
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp)
+            modifier = Modifier.fillMaxWidth().padding(16.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -241,11 +220,8 @@ fun DownloadedLanguageCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            language.displayName,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
+                        Text(language.displayName,
+                            style = MaterialTheme.typography.titleMedium)
                         if (isPrimary) {
                             Spacer(modifier = Modifier.width(8.dp))
                             AssistChip(
@@ -267,19 +243,15 @@ fun DownloadedLanguageCard(
                     Text(
                         formatSize(modelSize) + if (language.isFullSize) " • Full quality" else " • Compact",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                
+
                 IconButton(onClick = onDelete) {
-                    Icon(
-                        Icons.Default.Delete,
-                        contentDescription = "Delete",
-                        tint = MaterialTheme.colorScheme.error
-                    )
+                    Icon(Icons.Default.Delete, "Delete",
+                        tint = MaterialTheme.colorScheme.error)
                 }
             }
-            
+
             if (!isPrimary || !isSecondary) {
                 Spacer(modifier = Modifier.height(12.dp))
                 Row(
@@ -287,20 +259,14 @@ fun DownloadedLanguageCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     if (!isPrimary) {
-                        OutlinedButton(
-                            onClick = onSetPrimary,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("Set Primary")
-                        }
+                        OutlinedButton(onClick = onSetPrimary,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp)) { Text("Set Primary") }
                     }
                     if (!isSecondary) {
-                        OutlinedButton(
-                            onClick = onSetSecondary,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("Set Secondary")
-                        }
+                        OutlinedButton(onClick = onSetSecondary,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp)) { Text("Set Secondary") }
                     }
                 }
             }
@@ -318,15 +284,13 @@ fun AvailableLanguageCard(
     onDownload: () -> Unit,
     onCancel: () -> Unit
 ) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .animateContentSize()
+    Surface(
+        modifier = Modifier.fillMaxWidth().animateContentSize(),
+        shape = RoundedCornerShape(16.dp),
+        tonalElevation = 1.dp
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp)
+            modifier = Modifier.fillMaxWidth().padding(16.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -334,37 +298,30 @@ fun AvailableLanguageCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        language.displayName,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Medium
-                    )
+                    Text(language.displayName,
+                        style = MaterialTheme.typography.titleMedium)
                     Text(
                         formatSize(language.sizeBytes) + if (language.isFullSize) " • Full quality" else " • Compact",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                
+
                 if (!isDownloading) {
-                    Button(onClick = onDownload) {
-                        Icon(
-                            Icons.Default.Download,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
+                    FilledTonalButton(
+                        onClick = onDownload,
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.Download, null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Download")
                     }
                 }
             }
-            
+
             if (isDownloading) {
                 Spacer(modifier = Modifier.height(12.dp))
-                LinearProgressIndicator(
-                    progress = { downloadProgress / 100f },
-                    modifier = Modifier.fillMaxWidth()
-                )
+                LinearProgressIndicator(progress = { downloadProgress / 100f },
+                    modifier = Modifier.fillMaxWidth())
                 Spacer(modifier = Modifier.height(4.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -375,23 +332,16 @@ fun AvailableLanguageCard(
                         if (isExtracting) "Extracting... $downloadProgress%"
                         else "Downloading... $downloadProgress%",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    TextButton(onClick = onCancel) {
-                        Text("Cancel")
-                    }
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TextButton(onClick = onCancel) { Text("Cancel") }
                 }
             }
-            
+
             error?.let {
                 Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    it,
-                    style = MaterialTheme.typography.bodySmall,
+                Text(it, style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
+                    maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }
     }
