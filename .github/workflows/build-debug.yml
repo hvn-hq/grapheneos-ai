@@ -57,14 +57,23 @@ jobs:
         done
         echo "All required libraries present."
 
+    - name: Create gradle.properties
+      run: |
+        cat > gradle.properties << 'EOF'
+        android.useAndroidX=true
+        android.nonTransitiveRClass=true
+        kotlin.code.style=official
+        org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+        MYAPP_UPLOAD_STORE_FILE=not-used
+        MYAPP_UPLOAD_STORE_PASSWORD=not-used
+        MYAPP_UPLOAD_KEY_ALIAS=not-used
+        MYAPP_UPLOAD_KEY_PASSWORD=not-used
+        EOF
+
     - name: Build debug APK
       run: |
         chmod +x gradlew
-        ./gradlew :app:assembleDebug --no-daemon \
-          -PMYAPP_UPLOAD_STORE_FILE=not-used \
-          -PMYAPP_UPLOAD_STORE_PASSWORD=not-used \
-          -PMYAPP_UPLOAD_KEY_ALIAS=not-used \
-          -PMYAPP_UPLOAD_KEY_PASSWORD=not-used
+        ./gradlew :app:assembleDebug --no-daemon
 
     - name: Upload debug APK
       uses: actions/upload-artifact@v4
