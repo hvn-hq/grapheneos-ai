@@ -35,12 +35,15 @@ jobs:
         restore-keys: |
           llama-build-
 
+    - name: Install NDK and CMake via sdkmanager
+      run: |
+        yes | sdkmanager --install "ndk;27.0.12077973" "cmake;3.22.1" 2>&1 | tail -5
+        echo "NDK_PATH=$ANDROID_HOME/ndk/27.0.12077973" >> $GITHUB_ENV
+
     - name: Build llama.cpp native libraries
       run: |
         chmod +x scripts/build-llama-android.sh
-        ./scripts/build-llama-android.sh --download-ndk
-      env:
-        ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+        ./scripts/build-llama-android.sh "$NDK_PATH"
 
     - name: Verify prebuilt libraries
       run: |
