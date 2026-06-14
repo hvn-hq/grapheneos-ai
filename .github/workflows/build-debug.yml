@@ -50,9 +50,13 @@ jobs:
         LLAMA_SRC="app/src/main/cpp/llama/build-android/llama.cpp-src"
         INCLUDE_DIR="app/src/main/cpp/llama/prebuilt/arm64-v8a/include"
         mkdir -p "$INCLUDE_DIR"
-        cp "$LLAMA_SRC/include/llama.h" "$INCLUDE_DIR/"
-        cp "$LLAMA_SRC/ggml/include/ggml.h" "$INCLUDE_DIR/" 2>/dev/null || true
-        cp "$LLAMA_SRC/ggml/include/ggml-backend.h" "$INCLUDE_DIR/" 2>/dev/null || true
+        # Copy ALL headers from llama.cpp source — covers llama.h, ggml*.h, etc.
+        find "$LLAMA_SRC/include" -name '*.h' -exec cp {} "$INCLUDE_DIR/" \;
+        find "$LLAMA_SRC/ggml/include" -name '*.h' -exec cp {} "$INCLUDE_DIR/" \;
+        # Also grab any headers from the ggml src dir (ggml-cpu.h lives here sometimes)
+        find "$LLAMA_SRC/ggml/src" -maxdepth 1 -name '*.h' -exec cp {} "$INCLUDE_DIR/" \; 2>/dev/null || true
+        # And the common dir headers 
+        find "$LLAMA_SRC/common" -maxdepth 1 -name '*.h' -exec cp {} "$INCLUDE_DIR/" \; 2>/dev/null || true
         echo "Headers copied:"
         ls -la "$INCLUDE_DIR/"
 
