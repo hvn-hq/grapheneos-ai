@@ -60,7 +60,11 @@ jobs:
     - name: Build debug APK
       run: |
         chmod +x gradlew
-        ./gradlew :app:assembleDebug --no-daemon
+        ./gradlew :app:assembleDebug --no-daemon \
+          -PMYAPP_UPLOAD_STORE_FILE=not-used \
+          -PMYAPP_UPLOAD_STORE_PASSWORD=not-used \
+          -PMYAPP_UPLOAD_KEY_ALIAS=not-used \
+          -PMYAPP_UPLOAD_KEY_PASSWORD=not-used
 
     - name: Upload debug APK
       uses: actions/upload-artifact@v4
