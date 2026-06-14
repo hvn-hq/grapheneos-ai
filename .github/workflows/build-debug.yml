@@ -45,6 +45,17 @@ jobs:
         chmod +x scripts/build-llama-android.sh
         ./scripts/build-llama-android.sh "$NDK_PATH"
 
+    - name: Copy llama.cpp headers for JNI build
+      run: |
+        LLAMA_SRC="app/src/main/cpp/llama/build-android/llama.cpp-src"
+        INCLUDE_DIR="app/src/main/cpp/llama/prebuilt/arm64-v8a/include"
+        mkdir -p "$INCLUDE_DIR"
+        cp "$LLAMA_SRC/include/llama.h" "$INCLUDE_DIR/"
+        cp "$LLAMA_SRC/ggml/include/ggml.h" "$INCLUDE_DIR/" 2>/dev/null || true
+        cp "$LLAMA_SRC/ggml/include/ggml-backend.h" "$INCLUDE_DIR/" 2>/dev/null || true
+        echo "Headers copied:"
+        ls -la "$INCLUDE_DIR/"
+
     - name: Verify prebuilt libraries
       run: |
         echo "Checking prebuilt libraries..."
@@ -55,11 +66,12 @@ jobs:
             exit 1
           fi
         done
-        echo "All required libraries present."
+        test -f app/src/main/cpp/llama/prebuilt/arm64-v8a/include/llama.h || { echo "ERROR: Missing llama.h"; exit 1; }
+        echo "All required libraries and headers present."
 
     - name: Create gradle.properties
       run: |
-        cat > gradle.properties << 'EOF'
+        cat > gradle.properties <<'EOF'
         android.useAndroidX=true
         android.nonTransitiveRClass=true
         kotlin.code.style=official
@@ -69,6 +81,8 @@ jobs:
         MYAPP_UPLOAD_KEY_ALIAS=not-used
         MYAPP_UPLOAD_KEY_PASSWORD=not-used
         EOF
+        # Strip leading whitespace from heredoc (YAML indentation artifact)
+        sed -i 's/^[[:space:]]*//' gradle.properties
 
     - name: Build debug APK
       run: |
