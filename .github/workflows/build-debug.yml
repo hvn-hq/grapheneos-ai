@@ -8,6 +8,9 @@ on:
     branches: [ main ]
   workflow_dispatch:  # Manual trigger
 
+permissions:
+  contents: write  # Required for creating GitHub Releases
+
 jobs:
   build:
     runs-on: ubuntu-latest
