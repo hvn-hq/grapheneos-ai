@@ -1,6 +1,7 @@
 package com.satory.graphenosai.tts
 
 import android.content.Context
+import android.content.Intent
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
@@ -20,11 +21,15 @@ class TTSManager(context: Context) {
         
         /**
          * Check if TTS is available on this device without initializing it.
+         * Uses PackageManager to query for TTS service providers rather than
+         * instantiating a TextToSpeech object (which initializes asynchronously
+         * and would return empty results if queried immediately).
          */
         fun isTTSAvailable(context: Context): Boolean {
             return try {
-                val engines = TextToSpeech(context, null).engines
-                engines.isNotEmpty()
+                val intent = Intent(TextToSpeech.Engine.ACTION_CHECK_TTS_DATA)
+                val resolveInfos = context.packageManager.queryIntentActivities(intent, 0)
+                resolveInfos.isNotEmpty()
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to check TTS availability", e)
                 false
